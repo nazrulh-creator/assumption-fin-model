@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Assumption-Based Financial Modelling Engine</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">Strategy team MVP</p>
+          <h1>Assumption-Based Financial Modelling Engine</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="scenario-pill" id="scenarioPill">S2b Reference Case</div>
+          <button class="ghost-button" id="undoButton" type="button" title="Undo last change">Undo</button>
+          <button class="ghost-button" id="redoButton" type="button" title="Redo last change">Redo</button>
+          <button class="primary-button" id="saveScenarioButton" type="button">Save Scenario</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <nav class="side-nav" aria-label="Application sections">
+          <button class="nav-item active" data-view="dashboard" type="button">Dashboard</button>
+          <button class="nav-item" data-view="assumptions" type="button">Assumptions</button>
+          <button class="nav-item" data-view="pl" type="button">P&amp;L Viewer</button>
+          <button class="nav-item" data-view="validation" type="button">Validation</button>
+          <button class="nav-item" data-view="scenarios" type="button">Scenarios</button>
+          <button class="nav-item" data-view="exports" type="button">Exports</button>
+          <button class="nav-item" data-view="audit" type="button">Audit Trail</button>
+          <button class="nav-item" data-view="sources" type="button">Sources</button>
+        </nav>
+
+        <main class="content-area">
+          <section class="view active" id="dashboardView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Current scenario</p>
+                <h2 id="dashboardTitle">S2b Reference Case</h2>
+              </div>
+              <div class="status-badge" id="modelStatusBadge">Checking</div>
+            </div>
+            <div id="dashboardContent"></div>
+          </section>
+
+          <section class="view" id="assumptionsView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Controlled modelling layer</p>
+                <h2>Assumption Register</h2>
+              </div>
+              <button class="primary-button" id="newAssumptionButton" type="button">New Assumption</button>
+            </div>
+            <div id="assumptionsContent"></div>
+          </section>
+
+          <section class="view" id="plView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Formula-driven output</p>
+                <h2>P&amp;L Viewer</h2>
+              </div>
+            </div>
+            <div id="plContent"></div>
+          </section>
+
+          <section class="view" id="validationView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Reasonability engine</p>
+                <h2>Validation Centre</h2>
+              </div>
+            </div>
+            <div id="validationContent"></div>
+          </section>
+
+          <section class="view" id="scenariosView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Saved combinations</p>
+                <h2>Scenario Manager</h2>
+              </div>
+              <div class="inline-actions">
+                <button class="secondary-button" id="duplicateScenarioButton" type="button">Duplicate</button>
+                <button class="secondary-button" id="lockScenarioButton" type="button">Lock</button>
+              </div>
+            </div>
+            <div id="scenariosContent"></div>
+          </section>
+
+          <section class="view" id="exportsView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Export centre</p>
+                <h2>Export Outputs</h2>
+              </div>
+            </div>
+            <div id="exportsContent"></div>
+          </section>
+
+          <section class="view" id="auditView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Append-only activity log</p>
+                <h2>Audit Trail</h2>
+              </div>
+            </div>
+            <div id="auditContent"></div>
+          </section>
+
+          <section class="view" id="sourcesView">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Reference pack</p>
+                <h2>Sources</h2>
+              </div>
+            </div>
+            <div id="sourcesContent"></div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <aside class="editor-panel" id="editorPanel" aria-label="Assumption editor">
+      <div class="editor-header">
+        <div>
+          <p class="eyebrow">Assumption editor</p>
+          <h2 id="editorTitle">Edit assumption</h2>
+        </div>
+        <button class="icon-button" id="closeEditorButton" type="button" title="Close editor">X</button>
+      </div>
+      <form id="assumptionForm" class="editor-form"></form>
+    </aside>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="src/app.js" defer></script>
+  </body>
+</html>
