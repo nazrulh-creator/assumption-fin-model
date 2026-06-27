@@ -10,6 +10,8 @@ const METHOD_LABELS = {
   fixed_per_year: "Fixed per year",
 };
 const METHOD_KEYS = Object.keys(METHOD_LABELS);
+const MAX_ANNUAL_YEARS = 10;
+const MAX_MONTHLY_YEARS = 3;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const SOURCE_LOG = [
@@ -36,7 +38,7 @@ const DEFAULT_SETTINGS = {
   yearCount: 5,
   granularity: "annual",
   startMonth: 1,
-  monthlyYearCount: 5,
+  monthlyYearCount: 3,
   unitYear: 2029,
   currency: "RM",
   units: "RM'000",
@@ -154,14 +156,14 @@ const GUIDE_SECTIONS = [
     summary: "The P&L screen is a read-only output statement. It is the formal result of formula cards, drivers, projection settings, and the P&L line structure.",
     useWhen: [
       "You want to review revenue, cost, total revenue, total costs, and profit or loss by period.",
-      "You need to compare the annual view with the monthly view after changing granularity in Settings.",
+      "You need to compare the annual view with the monthly view after changing the P&L breakout or Settings.",
       "You want to verify that formula-card impacts are rolling into the correct line items.",
     ],
     actions: [
-      "Use Settings to select annual or monthly projection. Annual can run up to 10 years. Monthly can run up to 5 years and reconciles back to the annual model.",
+      "Use the P&L breakout controls or Settings to select annual or monthly projection. Annual can run up to 10 years. Monthly can run up to 3 years and reconciles back to the annual model.",
       "Read positive revenue lines as income. Cost lines are shown as negative values in the total section because they reduce profit.",
       "Use Assumptions to change the mechanics behind the P&L. This screen intentionally does not allow direct overwriting of outputs.",
-      "Use Scenarios for PDF, Word, Excel, CSV, and JSON exports after the P&L has been reviewed.",
+      "Use the P&L export buttons for PDF, Word, CSV, JSON, Google Docs import, and Google Sheets import files after the P&L has been reviewed.",
     ],
     checks: [
       "A dash means the value is effectively zero after rounding.",
@@ -267,7 +269,7 @@ const GUIDE_SECTIONS = [
       "Click Save Scenario before making changes that you may want to reverse later.",
       "Use Duplicate to create a copy name and keep the saved state available for comparison.",
       "Use Lock when a scenario is under review. Locking disables editable controls while keeping outputs and exports accessible.",
-      "Use PDF / Print for the current app output, Word or Excel for document-style extracts, Cards CSV for assumption review, Audit CSV for activity review, and Scenario JSON for transfer or backup.",
+      "Use PDF / Print, Word, CSV, JSON, Google Docs import, or Google Sheets import for report-pack outputs. Use Cards CSV for assumption review and Audit CSV for activity review.",
     ],
     checks: [
       "Scenario restores overwrite the current working state. Save first if the current state matters.",
@@ -305,7 +307,7 @@ const GUIDE_SECTIONS = [
       "You need to add, rename, reorder, or remove P&L lines.",
     ],
     actions: [
-      "Set Annual years from 1 to 10. Set Monthly years from 1 to 5. Monthly uses 12 periods per year.",
+      "Set Annual years from 1 to 10. Set Monthly years from 1 to 3. Monthly uses 12 periods per year.",
       "Keep translator backend on local for GitHub Pages. Live API is a placeholder for a future hosted backend.",
       "Use Global annual bound and Max cost / revenue to tune validation sensitivity.",
       "Add P&L lines when the business model needs a new output line. Rename lines for presentation. Reorder lines to improve readability.",
@@ -331,7 +333,7 @@ const QUICK_START_STEPS = [
     view: "settings",
     title: "2. Set the model frame",
     goal: "Choose the projection horizon, granularity, units, and P&L line structure before editing assumptions.",
-    actions: ["Choose annual or monthly.", "Set start year and year count.", "Confirm P&L lines match the review pack you intend to produce."],
+    actions: ["Choose annual or monthly in Settings or directly on the P&L screen.", "Set start year and year count.", "Confirm P&L lines match the review pack you intend to produce."],
     exit: "Continue when the P&L structure has the right rows and period length.",
   },
   {
@@ -373,7 +375,7 @@ const QUICK_START_STEPS = [
     view: "scenarios",
     title: "8. Save, lock, and export",
     goal: "Preserve the case and produce review files.",
-    actions: ["Save the scenario.", "Lock it if it is ready for review.", "Export PDF, Word, Excel, CSV, or JSON as needed."],
+    actions: ["Save the scenario.", "Lock it if it is ready for review.", "Export PDF, Word, CSV, JSON, Google Docs import, or Google Sheets import files as needed."],
     exit: "Continue when the scenario is saved and the required files are exported.",
   },
   {
@@ -481,12 +483,12 @@ function loadState() {
 }
 
 function migrateState(saved) {
-  if (saved.settings && saved.cards && saved.lines) return saved;
+  if (saved.settings && saved.cards && saved.lines) return normalizeState(saved);
   return loadFreshState();
 }
 
 function loadFreshState() {
-  return {
+  return normalizeState({
     settings: clone(DEFAULT_SETTINGS),
     lines: clone(DEFAULT_LINES),
     drivers: clone(DEFAULT_DRIVERS),
@@ -494,7 +496,30 @@ function loadFreshState() {
     unitEconomics: { segments: clone(DEFAULT_SEGMENTS), splits: defaultSplits(DEFAULT_LINES) },
     scenarios: [],
     audit: initialAudit(),
+  });
+}
+
+function normalizeState(source) {
+  const out = {
+    settings: { ...clone(DEFAULT_SETTINGS), ...(source.settings || {}) },
+    lines: clone(source.lines || DEFAULT_LINES),
+    drivers: clone(source.drivers || DEFAULT_DRIVERS),
+    cards: clone(source.cards || DEFAULT_CARDS),
+    unitEconomics: clone(source.unitEconomics || { segments: DEFAULT_SEGMENTS, splits: defaultSplits(source.lines || DEFAULT_LINES) }),
+    scenarios: clone(source.scenarios || []),
+    audit: clone(source.audit || initialAudit()),
   };
+  out.settings.granularity = out.settings.granularity === "monthly" ? "monthly" : "annual";
+  out.settings.yearCount = clampInteger(out.settings.yearCount, 1, MAX_ANNUAL_YEARS, DEFAULT_SETTINGS.yearCount);
+  out.settings.monthlyYearCount = clampInteger(out.settings.monthlyYearCount, 1, MAX_MONTHLY_YEARS, DEFAULT_SETTINGS.monthlyYearCount);
+  out.settings.startMonth = clampInteger(out.settings.startMonth, 1, 12, DEFAULT_SETTINGS.startMonth);
+  out.settings.startYear = clampInteger(out.settings.startYear, 1900, 2200, DEFAULT_SETTINGS.startYear);
+  if (!out.unitEconomics.segments?.length) out.unitEconomics.segments = clone(DEFAULT_SEGMENTS);
+  if (!out.unitEconomics.splits) out.unitEconomics.splits = defaultSplits(out.lines);
+  for (const lineItem of out.lines) {
+    if (!out.unitEconomics.splits[lineItem.key]) out.unitEconomics.splits[lineItem.key] = { method: "even", values: {}, byLine: "" };
+  }
+  return out;
 }
 
 function defaultSplits(lines) {
@@ -590,7 +615,7 @@ function renderDashboard(model, validation, unit) {
           <div class="panel-body">
             <div class="coverage-grid">
               ${coverage("Formula cards", "Built", "Cards use source_text, target, method, params, depends_on, status.")}
-              ${coverage("Granularity", "Built", "Annual up to 10 years; monthly up to 5 years.")}
+            ${coverage("Granularity", "Built", "Annual up to 10 years; monthly up to 3 years.")}
               ${coverage("Drivers", "Built", "Named independent input series for driver methods.")}
               ${coverage("P&L lines", "Built", "Rename, add, reorder, remove with parking.")}
               ${coverage("Unit Economics", "Built", "Up to 8 segments, split assumptions, matrix and mini-P&Ls.")}
@@ -609,7 +634,7 @@ function renderDashboard(model, validation, unit) {
             <table>
               <tbody>
                 <tr><td>Granularity</td><td>${escapeHTML(state.settings.granularity)}</td></tr>
-                <tr><td>Projection</td><td>${state.settings.granularity === "monthly" ? `${state.settings.monthlyYearCount} years x 12 months` : `${state.settings.yearCount} years`}</td></tr>
+                <tr><td>Projection</td><td>${state.settings.granularity === "monthly" ? `${state.settings.monthlyYearCount} years x 12 months` : `${state.settings.yearCount} annual years`}</td></tr>
                 <tr><td>Translator</td><td>${escapeHTML(state.settings.translatorBackend)}</td></tr>
                 <tr><td>Cards</td><td>${activeCards} active / ${state.cards.length} total</td></tr>
                 <tr><td>Segments</td><td>${state.unitEconomics.segments.length}</td></tr>
@@ -623,7 +648,7 @@ function renderDashboard(model, validation, unit) {
           </div>
           <div class="panel-body">
             <div class="notice">
-              Matrix total for ${state.settings.unitYear}: ${money(unit.totalByYear[state.settings.unitYear] || 0)}. Main P&L total: ${money(model.annual.total[state.settings.unitYear] || 0)}.
+              Matrix total for ${selectedUnitYear()}: ${money(unit.totalByYear[selectedUnitYear()] || 0)}. Main P&L total: ${money(model.annual.total[selectedUnitYear()] || 0)}.
             </div>
           </div>
         </div>
@@ -635,9 +660,7 @@ function renderDashboard(model, validation, unit) {
             <div class="button-row">
               <button class="primary-button" data-open-new-card type="button">New Formula Card</button>
               <button class="secondary-button" data-nav="drivers" type="button">Edit Drivers</button>
-              <button class="secondary-button" data-export="excel" type="button">Excel</button>
-              <button class="secondary-button" data-export="word" type="button">Word</button>
-              <button class="ghost-button" data-export="print" type="button">PDF / Print</button>
+              ${exportButtonsHTML("pack")}
             </div>
           </div>
         </div>
@@ -652,9 +675,15 @@ function renderPL(model) {
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">Profit & Loss statement</h3>
-        <span class="mini-badge">${state.settings.granularity} / ${state.settings.units}</span>
+        <div class="inline-actions">
+          ${projectionControlsHTML()}
+          <span class="mini-badge">${state.settings.granularity} / ${state.settings.units}</span>
+        </div>
       </div>
-      <div class="panel-body">${plTable(model, periods)}</div>
+      <div class="panel-body">
+        <div class="button-row export-actions">${exportButtonsHTML("pl")}</div>
+        ${plTable(model, periods)}
+      </div>
     </div>
   `;
 }
@@ -673,6 +702,7 @@ function renderAssumptions(model, validation) {
         <td><strong>${escapeHTML(sourceTitle(item.source_text))}</strong><br><span class="muted">${escapeHTML(item.source_text)}</span></td>
         <td>${escapeHTML(lineName(item.target.line))}<br><span class="muted">${targetYearsLabel(item.target.years)}</span></td>
         <td>${escapeHTML(METHOD_LABELS[item.method] || item.method)}<br><span class="muted">${escapeHTML(operationText(item))}</span></td>
+        <td>${operandStrip(years, item, model)}</td>
         <td><span class="mini-badge ${v.className}">${escapeHTML(v.status)}</span><br><span class="muted">${escapeHTML(v.hint || "")}</span></td>
         <td>${impactStrip(years, signed)}</td>
       </tr>
@@ -692,7 +722,7 @@ function renderAssumptions(model, validation) {
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>ID</th><th>Enabled</th><th>Category</th><th>Source text</th><th>Target</th><th>Operation</th><th>Status</th><th>Per-period impact</th></tr>
+              <tr><th>ID</th><th>Enabled</th><th>Category</th><th>Source text</th><th>Target</th><th>Operation</th><th>Mathematical operand</th><th>Status</th><th>Per-period impact</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
@@ -736,7 +766,7 @@ function renderDrivers(model) {
 }
 
 function renderUnitEconomics(model, validation, unit) {
-  const year = Number(state.settings.unitYear || getYears()[0]);
+  const year = selectedUnitYear();
   const segments = state.unitEconomics.segments;
   const lineRows = state.lines.map((lineItem) => {
     const lineTotal = model.annual.lines[lineItem.key]?.[year] || 0;
@@ -760,6 +790,7 @@ function renderUnitEconomics(model, validation, unit) {
           </div>
         </div>
         <div class="panel-body">
+          <div class="button-row export-actions">${exportButtonsHTML("unit")}</div>
           <div class="table-wrap">
             <table>
               <thead><tr><th class="sticky-col">P&L line</th>${segments.map((segment) => `<th class="number">${escapeHTML(segment.name)}</th>`).join("")}<th class="number">Total</th></tr></thead>
@@ -838,17 +869,14 @@ function renderScenarios(model, validation) {
         <div class="panel-body"><div class="table-wrap"><table><thead><tr><th>Scenario</th><th>Saved</th><th>Notes</th><th>Action</th></tr></thead><tbody>${scenarioRows}</tbody></table></div></div>
       </div>
       <div class="panel">
-        <div class="panel-header"><h3 class="panel-title">Exports</h3><span class="mini-badge">Logged actions</span></div>
+        <div class="panel-header"><h3 class="panel-title">P&L + Unit Economics report pack</h3><span class="mini-badge">Logged actions</span></div>
         <div class="panel-body">
+          <div class="button-row export-actions">${exportButtonsHTML("pack")}</div>
           <div class="button-row">
-            <button class="primary-button" data-export="pdf" type="button">PDF / Print</button>
-            <button class="secondary-button" data-export="word" type="button">Word</button>
-            <button class="secondary-button" data-export="excel" type="button">Excel</button>
-            <button class="secondary-button" data-export="cardsCsv" type="button">Cards CSV</button>
+            <button class="secondary-button" data-export="cardsCsv" type="button">Assumptions CSV</button>
             <button class="secondary-button" data-export="auditCsv" type="button">Audit CSV</button>
-            <button class="ghost-button" data-export="json" type="button">Scenario JSON</button>
           </div>
-          <p class="muted">Exports follow the current ${escapeHTML(state.settings.granularity)} view where applicable. PDF uses the browser print dialog.</p>
+          <p class="muted">The report pack includes the current P&L breakout, Unit Economics matrix, explicit formula-card assumptions, Unit Economics split assumptions, and implicit engine assumptions. Google Docs and Google Sheets exports are import-ready files for static GitHub Pages deployment.</p>
         </div>
       </div>
     </div>
@@ -894,8 +922,8 @@ function renderSettings(validation) {
           <div class="control-grid">
             ${settingField("Scenario", "scenarioName", "text", state.settings.scenarioName)}
             ${settingField("Start year", "startYear", "number", state.settings.startYear)}
-            ${settingField("Annual years", "yearCount", "number", state.settings.yearCount, { min: 1, max: 10 })}
-            ${settingField("Monthly years", "monthlyYearCount", "number", state.settings.monthlyYearCount, { min: 1, max: 5 })}
+            ${settingField(`Annual years (max ${MAX_ANNUAL_YEARS})`, "yearCount", "number", state.settings.yearCount, { min: 1, max: MAX_ANNUAL_YEARS })}
+            ${settingField(`Monthly years (max ${MAX_MONTHLY_YEARS})`, "monthlyYearCount", "number", state.settings.monthlyYearCount, { min: 1, max: MAX_MONTHLY_YEARS })}
             ${settingSelect("Granularity", "granularity", state.settings.granularity, ["annual", "monthly"])}
             ${settingSelect("Start month", "startMonth", String(state.settings.startMonth), MONTHS.map((_, index) => String(index + 1)), (x) => MONTHS[Number(x) - 1])}
             ${settingField("Currency", "currency", "text", state.settings.currency)}
@@ -1412,8 +1440,8 @@ function updateSetting(target, light = false) {
   const old = state.settings[key];
   let value = target.type === "checkbox" ? target.checked : target.value;
   if (target.type === "number" || ["startYear", "yearCount", "monthlyYearCount", "startMonth", "unitYear", "maxAnnualFigure", "maxCostRatio"].includes(key)) value = Number(value || 0);
-  if (key === "yearCount") value = Math.max(1, Math.min(10, value));
-  if (key === "monthlyYearCount") value = Math.max(1, Math.min(5, value));
+  if (key === "yearCount") value = Math.max(1, Math.min(MAX_ANNUAL_YEARS, value));
+  if (key === "monthlyYearCount") value = Math.max(1, Math.min(MAX_MONTHLY_YEARS, value));
   mutate(`Changed setting ${key} from ${old} to ${value}`, () => { state.settings[key] = value; }, light);
 }
 
@@ -1603,22 +1631,58 @@ function mutate(text, fn, light = false) {
 }
 
 function handleExport(type) {
-  const model = calculateModel();
-  if (type === "pdf" || type === "print") {
-    window.print();
-  } else if (type === "word") {
-    downloadFile("financial_model_scenario.doc", exportHtml(model), "application/msword");
-  } else if (type === "excel") {
-    downloadFile("financial_model_scenario.xls", exportHtml(model), "application/vnd.ms-excel");
-  } else if (type === "cardsCsv") {
+  if (type === "cardsCsv") {
     downloadFile("formula_cards.csv", cardsCsv(), "text/csv");
   } else if (type === "auditCsv") {
     downloadFile("audit_trail.csv", auditCsv(), "text/csv");
-  } else if (type === "json") {
-    downloadFile("scenario.json", JSON.stringify({ settings: state.settings, lines: state.lines, drivers: state.drivers, cards: state.cards, unitEconomics: state.unitEconomics }, null, 2), "application/json");
+  } else {
+    const mapped = mapLegacyExport(type);
+    const [scope, format] = mapped.split(":");
+    exportReport(scope, format);
   }
   state.audit.push(auditEntry(`Exported ${type} output`, "Export", "-", state.settings.scenarioName));
   persist();
+}
+
+function mapLegacyExport(type) {
+  if (type === "pdf" || type === "print") return "pack:pdf";
+  if (type === "word") return "pack:word";
+  if (type === "excel") return "pack:gsheet";
+  if (type === "json") return "pack:json";
+  return type.includes(":") ? type : "pack:json";
+}
+
+function exportReport(scope, format) {
+  const label = scopeLabel(scope);
+  const stem = filenameStem(scope);
+  if (format === "pdf") {
+    printReport(scope);
+  } else if (format === "word") {
+    downloadFile(`${stem}.doc`, reportHtml(scope), "application/msword");
+  } else if (format === "csv") {
+    downloadFile(`${stem}.csv`, reportCsv(scope), "text/csv");
+  } else if (format === "json") {
+    downloadFile(`${stem}.json`, JSON.stringify(reportJson(scope), null, 2), "application/json");
+  } else if (format === "gdoc") {
+    downloadFile(`${stem}_google_docs_import.html`, reportHtml(scope), "text/html");
+  } else if (format === "gsheet") {
+    downloadFile(`${stem}_google_sheets_import.xls`, reportSpreadsheetHtml(scope), "application/vnd.ms-excel");
+  } else {
+    toast(`${label} export format is not available.`);
+  }
+}
+
+function printReport(scope) {
+  const popup = window.open("", "_blank");
+  if (!popup) {
+    toast("Allow pop-ups, then try PDF / Print again.");
+    return;
+  }
+  popup.document.open();
+  popup.document.write(reportHtml(scope, true));
+  popup.document.close();
+  popup.focus();
+  setTimeout(() => popup.print(), 250);
 }
 
 function switchView(view) {
@@ -1635,7 +1699,9 @@ function closeEditor() {
 }
 
 function getYears() {
-  const count = state.settings.granularity === "monthly" ? Math.min(5, Number(state.settings.monthlyYearCount || 5)) : Math.min(10, Number(state.settings.yearCount || 5));
+  const count = state.settings.granularity === "monthly"
+    ? Math.min(MAX_MONTHLY_YEARS, Number(state.settings.monthlyYearCount || DEFAULT_SETTINGS.monthlyYearCount))
+    : Math.min(MAX_ANNUAL_YEARS, Number(state.settings.yearCount || DEFAULT_SETTINGS.yearCount));
   return Array.from({ length: count }, (_, index) => Number(state.settings.startYear || 2025) + index);
 }
 
@@ -1654,6 +1720,12 @@ function getPeriods() {
 
 function getDisplayPeriods() {
   return getPeriods();
+}
+
+function selectedUnitYear() {
+  const years = getYears();
+  const requested = Number(state.settings.unitYear || years[years.length - 1]);
+  return years.includes(requested) ? requested : years[years.length - 1];
 }
 
 function targetCoversYear(targetYears, year) {
@@ -1888,6 +1960,32 @@ function impactStrip(years, series) {
   return `<div class="impact-strip">${years.map((year) => `<span class="${(series[year] || 0) < 0 ? "negative" : "positive"}">${year}: ${money(series[year] || 0)}</span>`).join("")}</div>`;
 }
 
+function operandStrip(years, item, model) {
+  return `<div class="operand-strip">${years.map((year) => `<span>${escapeHTML(operandExpression(item, year, model))}</span>`).join("")}</div>`;
+}
+
+function operandExpression(item, year, model) {
+  const result = model.cardAnnual[item.id]?.[year] || 0;
+  if (!item.enabled) return `${year}: disabled = -`;
+  if (!targetCoversYear(item.target.years, year)) return `${year}: outside target = -`;
+  if (item.method === "flat_values") return `${year}: value ${money(item.params.values?.[year] || 0)} = ${money(result)}`;
+  if (item.method === "single_value_growth") {
+    const baseYear = Number(item.params.baseYear || year);
+    const exponent = Math.max(0, Number(year) - baseYear);
+    return `${year}: ${money(item.params.startValue)} x (1 + ${percent(item.params.growthRate)})^${exponent} = ${money(result)}`;
+  }
+  if (item.method === "percent_of_driver") {
+    const driverValue = model.drivers[item.params.driver]?.[year] || 0;
+    return `${year}: ${driverName(item.params.driver)} ${money(driverValue)} x ${percent(item.params.rate)} = ${money(result)}`;
+  }
+  if (item.method === "per_unit") {
+    const driverValue = model.drivers[item.params.driver]?.[year] || 0;
+    return `${year}: ${driverName(item.params.driver)} ${money(driverValue)} x ${money(item.params.unitRate)} = ${money(result)}`;
+  }
+  if (item.method === "fixed_per_year") return `${year}: fixed ${money(item.params.amount)} = ${money(result)}`;
+  return `${year}: unsupported method`;
+}
+
 function lineChart(labels, series) {
   const width = 760;
   const height = 240;
@@ -1922,6 +2020,28 @@ function settingField(label, key, type, value, opts = {}) {
 function settingSelect(label, key, value, options, labelFn = (x) => x) {
   const disabled = state.settings.locked && key !== "unitYear" ? "disabled" : "";
   return `<div class="form-field"><label>${escapeHTML(label)}</label>${selectHTML(`class="settings-input input-cell" data-setting="${key}" ${disabled}`, String(value), options.map(String), labelFn)}</div>`;
+}
+
+function projectionControlsHTML() {
+  const locked = state.settings.locked ? "disabled" : "";
+  return `
+    <div class="projection-controls">
+      <label class="form-field inline-field"><span>Breakout</span>${selectHTML(`class="settings-input input-cell" data-setting="granularity" ${locked}`, state.settings.granularity, ["annual", "monthly"], (value) => value === "annual" ? "Annual" : "Monthly")}</label>
+      <label class="form-field inline-field"><span>Annual years</span><input class="settings-input input-cell" data-setting="yearCount" type="number" min="1" max="${MAX_ANNUAL_YEARS}" value="${state.settings.yearCount}" ${locked}></label>
+      <label class="form-field inline-field"><span>Monthly years</span><input class="settings-input input-cell" data-setting="monthlyYearCount" type="number" min="1" max="${MAX_MONTHLY_YEARS}" value="${state.settings.monthlyYearCount}" ${locked}></label>
+    </div>
+  `;
+}
+
+function exportButtonsHTML(scope) {
+  return `
+    <button class="primary-button" data-export="${scope}:pdf" type="button">PDF / Print</button>
+    <button class="secondary-button" data-export="${scope}:word" type="button">Word</button>
+    <button class="secondary-button" data-export="${scope}:csv" type="button">CSV</button>
+    <button class="secondary-button" data-export="${scope}:json" type="button">JSON</button>
+    <button class="secondary-button" data-export="${scope}:gdoc" type="button">Google Docs</button>
+    <button class="secondary-button" data-export="${scope}:gsheet" type="button">Google Sheets</button>
+  `;
 }
 
 function editorNumber(label, name, value) {
@@ -1974,6 +2094,12 @@ function round(value, digits = 1) {
   return Math.round(Number(value || 0) * factor) / factor;
 }
 
+function clampInteger(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
 function negateSeries(series) {
   return Object.fromEntries(Object.entries(series || {}).map(([key, value]) => [key, -value]));
 }
@@ -1982,10 +2108,11 @@ function cardsCsv() {
   const model = calculateModel();
   const statuses = Object.fromEntries(validateModel(model).cards.map((entry) => [entry.id, entry]));
   return toCsv([
-    ["id", "category", "source_text", "enabled", "target_line", "target_years", "method", "params", "depends_on", "status", "validation_hint"],
+    ["id", "category", "source_text", "enabled", "target_line", "target_years", "method", "resultant_mathematical_operand", "params", "depends_on", "status", "validation_hint"],
     ...state.cards.map((item) => {
       const status = statuses[item.id] || { status: item.status, hint: item.hint };
-      return [item.id, item.category, item.source_text, item.enabled, item.target.line, targetYearsLabel(item.target.years), item.method, JSON.stringify(item.params), JSON.stringify(item.depends_on), status.status, status.hint];
+      const operand = getYears().map((year) => operandExpression(item, year, model)).join(" | ");
+      return [item.id, item.category, item.source_text, item.enabled, item.target.line, targetYearsLabel(item.target.years), item.method, operand, JSON.stringify(item.params), JSON.stringify(item.depends_on), status.status, status.hint];
     }),
   ]);
 }
@@ -1994,8 +2121,220 @@ function auditCsv() {
   return toCsv([["id", "timestamp", "event", "user"], ...state.audit.map((item) => [item.id, item.timestamp, item.text, item.user])]);
 }
 
-function exportHtml(model) {
-  return `<html><head><meta charset="utf-8"><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px}th{background:#e7eeeb}</style></head><body><h1>${escapeHTML(state.settings.scenarioName)}</h1><h2>P&L</h2>${plTable(model, getDisplayPeriods())}<h2>Formula Cards</h2><pre>${escapeHTML(cardsCsv())}</pre>${state.settings.includeAuditTrail ? `<h2>Audit</h2><pre>${escapeHTML(auditCsv())}</pre>` : ""}</body></html>`;
+function reportHtml(scope, printMode = false) {
+  const data = reportData(scope);
+  return `<!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${escapeHTML(scopeLabel(scope))} - ${escapeHTML(state.settings.scenarioName)}</title>
+        <style>${reportStyles(printMode)}</style>
+      </head>
+      <body>
+        <header>
+          <p class="eyebrow">Assumption-Based Financial Modelling Engine</p>
+          <h1>${escapeHTML(scopeLabel(scope))}</h1>
+          <p>${escapeHTML(state.settings.scenarioName)} | Generated ${escapeHTML(timestamp())} | ${escapeHTML(state.settings.granularity)} breakout</p>
+        </header>
+        ${data.includePL ? `<section><h2>P&L</h2>${htmlTable(data.pl.headers, data.pl.rows)}</section>` : ""}
+        ${data.includeUnit ? `<section><h2>Unit Economics - ${data.unit.year}</h2>${htmlTable(data.unit.matrixHeaders, data.unit.matrixRows)}</section>` : ""}
+        ${data.includeUnit ? `<section><h2>Unit Economics Split Assumptions</h2>${htmlTable(data.unit.splitHeaders, data.unit.splitRows)}</section>` : ""}
+        <section><h2>Explicit Formula Card Assumptions</h2>${htmlTable(data.assumptions.headers, data.assumptions.rows)}</section>
+        <section><h2>Implicit Engine Assumptions and Mathematical Operands</h2>${htmlTable(data.implicit.headers, data.implicit.rows)}</section>
+        ${state.settings.includeAuditTrail ? `<section><h2>Audit Trail</h2>${htmlTable(["ID", "Timestamp", "Event", "User"], state.audit.map((item) => [item.id, item.timestamp, item.text, item.user]))}</section>` : ""}
+      </body>
+    </html>`;
+}
+
+function reportSpreadsheetHtml(scope) {
+  return reportHtml(scope).replace("<body>", "<body><p>Import this file into Google Sheets. Each report section appears as a separate table in the workbook import.</p>");
+}
+
+function reportCsv(scope) {
+  const data = reportData(scope);
+  const sections = [];
+  if (data.includePL) sections.push(sectionCsv("P&L", data.pl.headers, data.pl.rows));
+  if (data.includeUnit) sections.push(sectionCsv(`Unit Economics - ${data.unit.year}`, data.unit.matrixHeaders, data.unit.matrixRows));
+  if (data.includeUnit) sections.push(sectionCsv("Unit Economics Split Assumptions", data.unit.splitHeaders, data.unit.splitRows));
+  sections.push(sectionCsv("Explicit Formula Card Assumptions", data.assumptions.headers, data.assumptions.rows));
+  sections.push(sectionCsv("Implicit Engine Assumptions and Mathematical Operands", data.implicit.headers, data.implicit.rows));
+  if (state.settings.includeAuditTrail) sections.push(sectionCsv("Audit Trail", ["ID", "Timestamp", "Event", "User"], state.audit.map((item) => [item.id, item.timestamp, item.text, item.user])));
+  return sections.join("\n\n");
+}
+
+function reportJson(scope) {
+  const data = reportData(scope);
+  return {
+    generatedAt: timestamp(),
+    scope,
+    scenario: state.settings.scenarioName,
+    settings: clone(state.settings),
+    pl: data.includePL ? { headers: data.pl.headers, rows: data.pl.rows } : null,
+    unitEconomics: data.includeUnit ? {
+      year: data.unit.year,
+      matrixHeaders: data.unit.matrixHeaders,
+      matrixRows: data.unit.matrixRows,
+      splitHeaders: data.unit.splitHeaders,
+      splitRows: data.unit.splitRows,
+    } : null,
+    explicitFormulaCardAssumptions: data.assumptions.objects,
+    implicitEngineAssumptions: data.implicit.objects,
+    rawState: {
+      lines: clone(state.lines),
+      drivers: clone(state.drivers),
+      cards: clone(state.cards),
+      unitEconomics: clone(state.unitEconomics),
+    },
+  };
+}
+
+function reportData(scope) {
+  const model = calculateModel();
+  const validation = validateModel(model);
+  const unit = calculateUnitEconomics(model, validation);
+  const includePL = scope !== "unit";
+  const includeUnit = scope !== "pl";
+  const periods = getDisplayPeriods();
+  const assumptionData = assumptionExportData(model, validation);
+  const implicitData = implicitAssumptionData(model, unit);
+  return {
+    includePL,
+    includeUnit,
+    pl: { headers: ["Section", "Line item", ...periods.map((period) => period.label)], rows: plExportRows(model, periods) },
+    unit: unitExportData(model, unit, validation),
+    assumptions: assumptionData,
+    implicit: implicitData,
+  };
+}
+
+function plExportRows(model, periods) {
+  const isMonthly = state.settings.granularity === "monthly";
+  const rows = [];
+  for (const item of state.lines.filter((lineItem) => lineItem.type === "revenue")) rows.push(["Revenue", item.name, ...periods.map((period) => money(periodValue(period, isMonthly ? model.period.lines[item.key] : model.annual.lines[item.key], model.annual.lines[item.key])))]);
+  rows.push(["Revenue", "Total Revenue", ...periods.map((period) => money(periodValue(period, isMonthly ? model.period.revenue : model.annual.revenue, model.annual.revenue)))]);
+  for (const item of state.lines.filter((lineItem) => lineItem.type === "cost")) rows.push(["Costs", item.name, ...periods.map((period) => money(periodValue(period, isMonthly ? model.period.lines[item.key] : model.annual.lines[item.key], model.annual.lines[item.key])))]);
+  rows.push(["Costs", "Total Costs", ...periods.map((period) => money(-periodValue(period, isMonthly ? model.period.cost : model.annual.cost, model.annual.cost)))]);
+  rows.push(["Result", "Profit / (Loss)", ...periods.map((period) => money(periodValue(period, isMonthly ? model.period.total : model.annual.total, model.annual.total)))]);
+  return rows;
+}
+
+function periodValue(period, activeSeries, annualSeries) {
+  return activeSeries?.[period.key] ?? annualSeries?.[period.year] ?? 0;
+}
+
+function unitExportData(model, unit, validation) {
+  const year = selectedUnitYear();
+  const segments = state.unitEconomics.segments;
+  const matrixHeaders = ["P&L line", ...segments.map((segment) => segment.name), "Total"];
+  const matrixRows = state.lines.map((lineItem) => [
+    lineItem.name,
+    ...segments.map((segment) => money(unit.lineSegment[lineItem.key]?.[segment.key]?.[year] || 0)),
+    money(model.annual.lines[lineItem.key]?.[year] || 0),
+  ]);
+  matrixRows.push(["Profit / (Loss)", ...segments.map((segment) => money(unit.segmentTotal[segment.key]?.[year] || 0)), money(unit.totalByYear[year] || 0)]);
+
+  const splitHeaders = ["P&L line", "Method", ...segments.map((segment) => segment.name), "By line", "Status", "Validation hint"];
+  const splitRows = state.lines.map((lineItem) => {
+    const split = splitFor(lineItem.key);
+    const status = validation.splits.find((item) => item.lineKey === lineItem.key) || { status: "ok", hint: "" };
+    return [
+      lineItem.name,
+      splitMethodLabel(split.method),
+      ...segments.map((segment) => split.values?.[segment.key] ?? ""),
+      split.byLine ? lineName(split.byLine) : "",
+      status.status,
+      status.hint,
+    ];
+  });
+  return { year, matrixHeaders, matrixRows, splitHeaders, splitRows };
+}
+
+function assumptionExportData(model, validation) {
+  const years = getYears();
+  const statusMap = Object.fromEntries(validation.cards.map((item) => [item.id, item]));
+  const objects = state.cards.map((item) => {
+    const annual = model.cardAnnual[item.id] || blankYearSeries(years);
+    const signed = signedAnnualForCard(item, annual);
+    const status = statusMap[item.id] || { status: item.status, hint: item.hint || "" };
+    return {
+      id: item.id,
+      category: item.category,
+      sourceText: item.source_text,
+      enabled: item.enabled,
+      targetLine: lineName(item.target.line),
+      targetYears: targetYearsLabel(item.target.years),
+      method: item.method,
+      operation: operationText(item),
+      mathematicalOperand: years.map((year) => operandExpression(item, year, model)).join(" | "),
+      signedImpact: years.map((year) => `${year}: ${money(signed[year] || 0)}`).join(" | "),
+      status: status.status,
+      validationHint: status.hint,
+      params: clone(item.params),
+      dependsOn: clone(item.depends_on || []),
+    };
+  });
+  const headers = ["ID", "Category", "Source text", "Enabled", "Target line", "Target years", "Method", "Operation", "Mathematical operand", "Signed impact", "Status", "Validation hint"];
+  const rows = objects.map((item) => [item.id, item.category, item.sourceText, item.enabled, item.targetLine, item.targetYears, item.method, item.operation, item.mathematicalOperand, item.signedImpact, item.status, item.validationHint]);
+  return { headers, rows, objects };
+}
+
+function implicitAssumptionData(model, unit) {
+  const years = getYears();
+  const objects = [
+    implicitAssumption("Projection breakout", `${state.settings.granularity === "monthly" ? `${state.settings.monthlyYearCount} years x 12 months` : `${state.settings.yearCount} annual years`}`, `Annual cap ${MAX_ANNUAL_YEARS}; monthly cap ${MAX_MONTHLY_YEARS}. Active years: ${years.join(", ")}.`),
+    implicitAssumption("Monthly operand", "Monthly period value = annual formula-card value / 12", state.settings.granularity === "monthly" ? "Active for P&L monthly display." : "Inactive while annual breakout is selected."),
+    implicitAssumption("Cost sign operand", "Displayed cost = raw cost x -1", "Costs reduce Profit / (Loss), while raw formula cards stay positive for cost input clarity."),
+    implicitAssumption("Total revenue", "Total Revenue = sum of all active revenue P&L lines", years.map((year) => `${year}: ${money(model.annual.revenue[year] || 0)}`).join(" | ")),
+    implicitAssumption("Total costs", "Total Costs = sum of all active cost P&L lines x -1", years.map((year) => `${year}: ${money(-(model.annual.cost[year] || 0))}`).join(" | ")),
+    implicitAssumption("Profit / (Loss)", "Profit / (Loss) = Total Revenue - Total raw costs", years.map((year) => `${year}: ${money(model.annual.total[year] || 0)}`).join(" | ")),
+    implicitAssumption("Unit Economics normalization", "Segment allocation weight = segment input / sum of segment inputs", "Ratios, percentages, and per-segment quantity inputs normalize so Unit Economics reconciles to the main P&L."),
+    implicitAssumption("By-line split guard", "If a split references another line recursively, cycle detection falls back to even split", "Prevents circular Unit Economics allocation logic."),
+    implicitAssumption("Unit Economics reconciliation", "Unit Economics total = sum of segment allocated P&L", `${selectedUnitYear()}: ${money(unit.totalByYear[selectedUnitYear()] || 0)}.`),
+    implicitAssumption("Static Google export", "Google Docs = HTML import file; Google Sheets = XLS/HTML table import file", "Direct Drive creation requires Google authentication and is outside the static GitHub Pages app."),
+  ];
+  return {
+    headers: ["Implicit assumption", "Mathematical operand / engine design", "Resulting effect"],
+    rows: objects.map((item) => [item.name, item.operand, item.effect]),
+    objects,
+  };
+}
+
+function implicitAssumption(name, operand, effect) {
+  return { name, operand, effect };
+}
+
+function htmlTable(headers, rows) {
+  return `<table><thead><tr>${headers.map((header) => `<th>${escapeHTML(header)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHTML(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function sectionCsv(title, headers, rows) {
+  return toCsv([[title], headers, ...rows]);
+}
+
+function reportStyles(printMode = false) {
+  return `
+    body{margin:${printMode ? "28px" : "18px"};color:#1d2428;font-family:Inter,Aptos,"Segoe UI",Arial,sans-serif;font-size:12px;line-height:1.35}
+    header{border-bottom:2px solid #172b4d;margin-bottom:18px;padding-bottom:10px}
+    .eyebrow{margin:0 0 4px;color:#607078;font-size:10px;font-weight:800;text-transform:uppercase}
+    h1{margin:0 0 4px;color:#172b4d;font-size:24px}
+    h2{margin:22px 0 8px;color:#172b4d;font-size:17px;break-after:avoid}
+    section{margin-bottom:18px;break-inside:avoid}
+    table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px}
+    th,td{border:1px solid #aebbb7;padding:5px 6px;vertical-align:top;text-align:left}
+    th{background:#e7eeeb;color:#253138;font-weight:800}
+    tr:nth-child(even) td{background:#f8fbfa}
+    p{margin:0 0 8px}
+  `;
+}
+
+function scopeLabel(scope) {
+  if (scope === "pl") return "P&L Report";
+  if (scope === "unit") return "Unit Economics Report";
+  return "P&L and Unit Economics Report Pack";
+}
+
+function filenameStem(scope) {
+  return `${scope === "pl" ? "pl" : scope === "unit" ? "unit_economics" : "pl_unit_economics"}_${String(state.settings.scenarioName || "scenario").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`;
 }
 
 function downloadFile(filename, content, mimeType) {
@@ -2034,12 +2373,13 @@ function snapshotFrom(source) {
 }
 
 function restoreSnapshot(snapshot) {
-  state.settings = clone(snapshot.settings);
-  state.lines = clone(snapshot.lines);
-  state.drivers = clone(snapshot.drivers);
-  state.cards = clone(snapshot.cards);
-  state.unitEconomics = clone(snapshot.unitEconomics);
-  state.scenarios = clone(snapshot.scenarios || state.scenarios);
+  const normalized = normalizeState({ ...snapshot, scenarios: snapshot.scenarios || state.scenarios, audit: state.audit });
+  state.settings = clone(normalized.settings);
+  state.lines = clone(normalized.lines);
+  state.drivers = clone(normalized.drivers);
+  state.cards = clone(normalized.cards);
+  state.unitEconomics = clone(normalized.unitEconomics);
+  state.scenarios = clone(normalized.scenarios || state.scenarios);
 }
 
 function persist() {

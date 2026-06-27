@@ -536,8 +536,26 @@ button:disabled {
   font-weight: 700;
 }
 
+.projection-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.projection-controls .inline-field {
+  width: 150px;
+}
+
+.export-actions {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
 .year-chip-row,
-.impact-strip {
+.impact-strip,
+.operand-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -569,6 +587,24 @@ button:disabled {
   border-radius: 6px;
   background: #f8fbfa;
   font-weight: 700;
+}
+
+.operand-strip {
+  min-width: 320px;
+  max-width: 560px;
+}
+
+.operand-strip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid rgba(15, 94, 215, 0.28);
+  border-radius: 6px;
+  background: #eef5ff;
+  color: #163b73;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
 }
 
 .mini-pl-grid {
@@ -868,6 +904,11 @@ button:disabled {
   .coverage-grid,
   .quick-step-grid {
     grid-template-columns: 1fr;
+  }
+
+  .projection-controls,
+  .projection-controls .inline-field {
+    width: 100%;
   }
 }
 

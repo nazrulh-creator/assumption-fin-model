@@ -5,11 +5,12 @@ Static single-user MVP for the Strategy team assumption-based P&L modelling engi
 ## Included in this build
 
 - SDD-style formula cards with `source_text`, target line/year, method, params, dependencies, and validation status.
-- Annual projection up to 10 years, or monthly projection up to 5 years.
+- Annual P&L breakout up to 10 years, or monthly P&L breakout up to 3 years.
 - Named driver series for driver-linked assumptions.
 - Editable P&L line structure with add, rename, reorder, remove, and dependency parking.
 - Unit Economics with up to 8 segments, split methods, matrix view, and mini P&Ls.
-- Scenario save/restore, undo/redo, audit trail, and export buttons for PDF/print, Word, Excel, CSV, and JSON.
+- Scenario save/restore, undo/redo, audit trail, and report exports for PDF/print, Word, CSV, JSON, Google Docs import, and Google Sheets import formats.
+- P&L and Unit Economics report packs include explicit formula-card assumptions, Unit Economics split assumptions, and implicit engine/mathematical assumptions.
 - Local deterministic translator, plus a placeholder setting for a future live `/api/translate` backend.
 - Contextual User Guide and Quick Start Guide, both available from every screen and printable as PDF from their guide screens.
 
