@@ -1,213 +1,418 @@
-const STORAGE_KEY = "abfm-engine-state-v2";
+const STORAGE_KEY = "adfm-sdd-v2-state";
 const USER_NAME = "Model owner";
+
+const TAXONOMY = ["Volume & Growth", "Revenue Drivers", "Cost Base", "Risk & ECL", "Funding", "Macro / Other"];
+const METHOD_LABELS = {
+  flat_values: "Flat values",
+  single_value_growth: "Single value + growth",
+  percent_of_driver: "% of driver",
+  per_unit: "Per unit",
+  fixed_per_year: "Fixed per year",
+};
+const METHOD_KEYS = Object.keys(METHOD_LABELS);
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const SOURCE_LOG = [
   {
-    item: "Build architecture",
-    source: "Assumption_Based_Financial_Modelling_Build_Guide.pdf",
-    ref: "Sections 1-21",
-    note: "Web app is source of truth, P&L-only MVP, assumption register, validation, scenarios, exports, and audit trail.",
+    item: "SDD v2 product contract",
+    source: "Assumption-Driven-Financial-Model-SDD-v2.0.pdf",
+    note: "Formula cards, annual/monthly granularity, drivers, editable P&L lines, Unit Economics, exports, audit, and translator seam.",
   },
   {
-    item: "S2b P&L reference case",
+    item: "Seed financial case",
     source: "CGC Digital 3.0 Financial Projections.pdf",
-    ref: "Projected Profit and Loss for Financial Model S2b",
-    note: "Seeded five-year revenue, investment income, expense, ECL, funding, guarantee cover, net reserved, and GRR values.",
+    note: "Reference values retained as starter assumptions so a new model does not open as zeros.",
   },
   {
-    item: "Digital guarantee revenue drivers",
+    item: "Driver hints",
     source: "Digital Guarantee Revenue Projection.xlsx",
-    ref: "Assumptions and DG Revenue tabs",
-    note: "Seeded fee rates, per-project charge logic, programme sizing, and inactive driver reference assumption.",
+    note: "Programme size, guarantee volume, man-day, project count, and fee-rate patterns inform starter drivers.",
   },
 ];
 
-const LINE_ITEMS = [
-  { name: "Distribution fee", group: "Revenue" },
-  { name: "Referral fee", group: "Revenue" },
-  { name: "Cr. Guarantee Processing fee", group: "Revenue" },
-  { name: "Development Fee", group: "Revenue" },
-  { name: "Service fee for PD model", group: "Revenue" },
-  { name: "Recurring imSME service fee", group: "Revenue" },
-  { name: "Digital guarantee", group: "Revenue" },
-  { name: "Investment income", group: "Investment Income" },
-  { name: "Operating Expenses", group: "Expenses" },
-  { name: "Expected credit loss", group: "Expenses" },
-  { name: "Financing cost", group: "Below PBT" },
-  { name: "Tax", group: "Below PBT" },
-];
-
-const FINANCIAL_METRICS = [
-  "Funding from CGC Malaysia",
-  "Funding from SPRA",
-  "Guarantee Cover",
-  "Net Reserved",
-  "GRR",
-];
-
-const METHOD_LABELS = {
-  yearSpecific: "Year-specific values",
-  fixed: "Fixed annual amount",
-  compound: "Compound annual growth",
-  straightLine: "Straight-line growth",
-  percentRevenue: "% of total operating revenue",
-  percentLine: "% of another line item",
-  volumePrice: "Volume x price",
-  oneOff: "One-off amount",
-};
-
-const TEMPLATE_LIBRARY = [
-  ["TMP-001", "Revenue assumptions", "Revenue starts at RM[x] in Year 1 and grows by [y]% annually.", "compound"],
-  ["TMP-002", "Revenue assumptions", "Revenue increases from RM[x] in Year 1 to RM[y] in Year [n] using straight-line growth.", "straightLine"],
-  ["TMP-003", "Revenue assumptions", "Revenue is calculated as [number of customers] multiplied by [average fee per customer].", "volumePrice"],
-  ["TMP-004", "Direct cost assumptions", "Cost starts at RM[x] in Year 1 and grows by [y]% annually.", "compound"],
-  ["TMP-005", "Direct cost assumptions", "Cost is fixed at RM[x] per year.", "fixed"],
-  ["TMP-006", "Direct cost assumptions", "Cost is [x]% of total revenue.", "percentRevenue"],
-  ["TMP-007", "Operating expenditure assumptions", "Staff cost is calculated as [headcount] multiplied by [average cost per employee].", "volumePrice"],
-  ["TMP-008", "Operating expenditure assumptions", "Technology cost is RM[x] in Year 1, then increases by [y]% annually.", "compound"],
-  ["TMP-009", "Credit and risk cost assumptions", "Expected credit loss is calculated as exposure multiplied by PD multiplied by LGD.", "volumePrice"],
-];
-
-const ASSUMPTION_CATEGORIES = [
-  "1. Revenue assumptions",
-  "2. Direct cost assumptions",
-  "3. Operating expenditure assumptions",
-  "4. Credit and risk cost assumptions",
-  "5. Tax and financing assumptions",
-  "6. Productivity and efficiency assumptions",
-  "7. Scenario overlay assumptions",
-  "8. Funding and financial strength assumptions",
-];
-
-const DEFAULT_CONTROLS = {
-  scenarioName: "S2b Reference Case",
-  baseYear: 2024,
+const DEFAULT_SETTINGS = {
+  scenarioName: "S2b Reference Case - SDD v2",
   startYear: 2025,
-  duration: 5,
+  yearCount: 5,
+  granularity: "annual",
+  startMonth: 1,
+  monthlyYearCount: 5,
+  unitYear: 2029,
   currency: "RM",
   units: "RM'000",
-  outputStyle: "Working-model style",
-  approvalRequired: false,
-  includeAuditTrail: true,
-  maxRevenueGrowth: 1.2,
-  maxCostGrowth: 0.6,
-  maxRevenueDecline: -0.4,
-  maxCostDecline: -0.5,
-  maxYear5RevenueMultiple: 8,
-  minEbitdaMargin: -3,
-  maxCumulativeLoss: 50000,
-  materialityThreshold: 1000,
-  taxRate: 0,
+  translatorBackend: "local",
+  maxAnnualFigure: 120000,
+  maxCostRatio: 3,
   locked: false,
+  includeAuditTrail: true,
 };
 
-const DEFAULT_ASSUMPTIONS = [
-  assumption("ASM-001", "1. Revenue assumptions", "Distribution fee", "Distribution fee", "yearSpecific", true, {
-    text: "Distribution fee follows the S2b five-year reference projection.",
+const DEFAULT_LINES = [
+  line("distribution_fee", "Distribution fee", "revenue"),
+  line("referral_fee", "Referral fee", "revenue"),
+  line("processing_fee", "Credit guarantee processing fee", "revenue"),
+  line("development_fee", "Development fee", "revenue"),
+  line("pd_model_service", "Service fee for PD model", "revenue"),
+  line("imsme_service", "Recurring imSME service fee", "revenue"),
+  line("digital_guarantee", "Digital guarantee", "revenue"),
+  line("investment_income", "Investment income", "revenue"),
+  line("operating_expenses", "Operating expenses", "cost"),
+  line("expected_credit_loss", "Expected credit loss", "cost"),
+  line("technology_support", "Technology support cost", "cost"),
+];
+
+const DEFAULT_DRIVERS = [
+  driver("programme_size", "Programme size", "RM'000", 145600, 0.15, "Digital guarantee programme pipeline"),
+  driver("guarantee_volume", "Guarantee volume", "RM'000", 72800, 0.12, "50% EAD on programme size"),
+  driver("project_count", "Number of projects", "count", 3, 0, "Current manpower capacity"),
+  driver("man_days", "Man-days per project", "days", 720, 0, "6 months x 20 working days x 6 people"),
+  driver("guarantee_count", "Number of guarantees", "count", 8000, 0.1, "Illustrative guarantee activity driver"),
+];
+
+const DEFAULT_CARDS = [
+  card("FC-001", "Revenue Drivers", "Distribution fee follows the S2b five-year reference projection.", "distribution_fee", "flat_values", {
     values: { 2025: 224.6, 2026: 500, 2027: 850, 2028: 1300, 2029: 1950 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.94,
   }),
-  assumption("ASM-002", "1. Revenue assumptions", "Referral fee", "Referral fee", "yearSpecific", true, {
-    text: "Referral fee follows the S2b five-year reference projection.",
+  card("FC-002", "Revenue Drivers", "Referral fee follows the S2b five-year reference projection.", "referral_fee", "flat_values", {
     values: { 2025: 36, 2026: 46.6, 2027: 63.9, 2028: 86.8, 2029: 123.2 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.94,
   }),
-  assumption("ASM-003", "1. Revenue assumptions", "Credit guarantee processing fee", "Cr. Guarantee Processing fee", "yearSpecific", true, {
-    text: "Processing fee follows the S2b reference projection.",
+  card("FC-003", "Revenue Drivers", "Credit guarantee processing fee follows the S2b reference projection.", "processing_fee", "flat_values", {
     values: { 2025: 449.2, 2026: 1000, 2027: 1700, 2028: 2600, 2029: 3900 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.94,
   }),
-  assumption("ASM-004", "1. Revenue assumptions", "Development fee", "Development Fee", "yearSpecific", true, {
-    text: "Development fee follows the S2b five-year reference projection.",
+  card("FC-004", "Revenue Drivers", "Development fee follows the S2b five-year reference projection.", "development_fee", "flat_values", {
     values: { 2025: 5850, 2026: 6500, 2027: 7700, 2028: 10300, 2029: 11700 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.94,
   }),
-  assumption("ASM-005", "1. Revenue assumptions", "Service fee for PD model", "Service fee for PD model", "yearSpecific", true, {
-    text: "PD model service fee starts in 2026 and grows 10% annually thereafter.",
-    values: { 2025: 0, 2026: 250, 2027: 275, 2028: 302.5, 2029: 332.8 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.92,
+  card("FC-005", "Revenue Drivers", "Service fee for PD model is RM250k in 2026 and grows by 10% annually.", "pd_model_service", "single_value_growth", {
+    startValue: 250,
+    growthRate: 0.1,
+    baseYear: 2026,
   }),
-  assumption("ASM-006", "1. Revenue assumptions", "Recurring imSME service fee", "Recurring imSME service fee", "yearSpecific", true, {
-    text: "Recurring imSME service fee follows the S2b reference profile.",
+  card("FC-006", "Revenue Drivers", "Recurring imSME service fee follows the S2b reference profile.", "imsme_service", "flat_values", {
     values: { 2025: 0, 2026: 3251.5, 2027: 3326.9, 2028: 3613.5, 2029: 3937.3 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.92,
   }),
-  assumption("ASM-007", "1. Revenue assumptions", "Digital guarantee", "Digital guarantee", "yearSpecific", true, {
-    text: "Digital guarantee revenue follows the S2b reference profile.",
+  card("FC-007", "Revenue Drivers", "Digital guarantee revenue follows the S2b reference profile.", "digital_guarantee", "flat_values", {
     values: { 2025: 669, 2026: 1700, 2027: 3450, 2028: 6200, 2029: 11150 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.94,
   }),
-  assumption("ASM-008", "1. Revenue assumptions", "Digital guarantee driver reference", "Digital guarantee", "yearSpecific", false, {
-    text: "Reference-only driver from the workbook: programme totals, 50% EAD, 2.5% guarantee fee, 10% distribution fee, 20% processing fee, and RM1.1088m per project charges.",
-    values: { 2025: 0, 2026: 0, 2027: 3872.4, 2028: 4316.4, 2029: 4076.4 },
-    source: "Digital Guarantee Revenue Projection.xlsx, DG Revenue tab",
-    confidence: 0.86,
-  }),
-  assumption("ASM-009", "1. Revenue assumptions", "Investment income", "Investment income", "yearSpecific", true, {
-    text: "Investment income follows S2b reference projection and assumes 4.25% net investment income after fees.",
+  card("FC-008", "Revenue Drivers", "Investment income follows S2b and assumes 4.25% net investment income after fees.", "investment_income", "flat_values", {
     values: { 2025: 177.2, 2026: 2155.9, 2027: 4264.3, 2028: 7669.7, 2029: 13891.4 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b key assumption 7",
-    confidence: 0.9,
   }),
-  assumption("ASM-010", "3. Operating expenditure assumptions", "Operating expenses", "Operating Expenses", "yearSpecific", true, {
-    text: "Operating expenses match the S2b reference financial model.",
-    values: { 2025: -23578.5, 2026: -25872.6, 2027: -28542.8, 2028: -33317.3, 2029: -37415.8 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table",
-    confidence: 0.94,
+  card("FC-009", "Cost Base", "Operating expenses match the S2b reference financial model.", "operating_expenses", "flat_values", {
+    values: { 2025: 23578.5, 2026: 25872.6, 2027: 28542.8, 2028: 33317.3, 2029: 37415.8 },
   }),
-  assumption("ASM-011", "4. Credit and risk cost assumptions", "Expected credit loss", "Expected credit loss", "yearSpecific", true, {
-    text: "ECL follows S2b, based on reference claims assumptions for NBFI and SPRA guarantee exposure.",
-    values: { 2025: -458.3, 2026: -1484.1, 2027: -2923.5, 2028: -5296.9, 2029: -9511.5 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b P&L table and key assumptions 4-5",
-    confidence: 0.89,
+  card("FC-010", "Risk & ECL", "Expected credit loss follows S2b claims assumptions.", "expected_credit_loss", "flat_values", {
+    values: { 2025: 458.3, 2026: 1484.1, 2027: 2923.5, 2028: 5296.9, 2029: 9511.5 },
   }),
-  assumption("ASM-012", "5. Tax and financing assumptions", "Financing cost", "Financing cost", "fixed", true, {
-    text: "No interest expense is incurred in the S2b reference case.",
-    amount: 0,
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b key assumption 8",
-    confidence: 0.9,
-  }),
-  assumption("ASM-013", "8. Funding and financial strength assumptions", "Funding from CGC Malaysia", "Funding from CGC Malaysia", "yearSpecific", true, {
-    text: "Annual support funding from CGC Malaysia follows the detailed S2b P&L table.",
-    values: { 2025: 15000, 2026: 15000, 2027: 15100, 2028: 14800, 2029: 13700 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b financial strength table",
-    confidence: 0.9,
-  }),
-  assumption("ASM-014", "8. Funding and financial strength assumptions", "Funding from SPRA", "Funding from SPRA", "yearSpecific", true, {
-    text: "SPRA funding follows the detailed S2b P&L table.",
-    values: { 2025: 13000, 2026: 32000, 2027: 48000, 2028: 77000, 2029: 140000 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b financial strength table",
-    confidence: 0.9,
-  }),
-  assumption("ASM-015", "8. Funding and financial strength assumptions", "Guarantee cover", "Guarantee Cover", "yearSpecific", true, {
-    text: "Guarantee cover follows the S2b financial strength table.",
-    values: { 2025: 33000, 2026: 84250, 2027: 169825, 2028: 307400, 2029: 554750 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b financial strength table",
-    confidence: 0.9,
-  }),
-  assumption("ASM-016", "8. Funding and financial strength assumptions", "Net reserved", "Net Reserved", "yearSpecific", true, {
-    text: "Net reserved follows the S2b financial strength table.",
-    values: { 2025: 13534.8, 2026: 47691.8, 2027: 99562, 2028: 183910.1, 2029: 337639.8 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b financial strength table",
-    confidence: 0.9,
-  }),
-  assumption("ASM-017", "8. Funding and financial strength assumptions", "Guarantee reserve ratio", "GRR", "yearSpecific", true, {
-    text: "GRR is held at 2.4x in the S2b reference case.",
-    values: { 2025: 2.4, 2026: 2.4, 2027: 2.4, 2028: 2.4, 2029: 2.4 },
-    source: "CGC Digital 3.0 Financial Projections.pdf, S2b financial strength table",
-    confidence: 0.9,
+  card("FC-011", "Cost Base", "Technology support cost is fixed at RM600k per year.", "technology_support", "fixed_per_year", {
+    amount: 600,
   }),
 ];
+
+const DEFAULT_SEGMENTS = [
+  { key: "digital_banks", name: "Digital Banks" },
+  { key: "nbfi", name: "NBFI" },
+  { key: "ecosystem", name: "Ecosystem" },
+];
+
+const HELP_VIEWS = new Set(["guide", "quickStart"]);
+const VIEW_LABELS = {
+  dashboard: "Dashboard",
+  pl: "P&L",
+  assumptions: "Assumptions",
+  drivers: "Drivers",
+  unitEconomics: "Unit Economics",
+  unitAssumptions: "Unit Econ Assumptions",
+  scenarios: "Scenarios",
+  audit: "Audit Trail",
+  settings: "Settings",
+};
+
+const GUIDE_SECTIONS = [
+  {
+    view: "dashboard",
+    title: "Dashboard",
+    summary: "The Dashboard is the management cockpit. Use it to understand whether the current scenario is usable before you spend time interpreting outputs or preparing exports.",
+    useWhen: [
+      "You want the fastest view of revenue, profit or loss, cumulative losses, breakeven year, model status, and SDD coverage.",
+      "You need to confirm whether the model is clean, needs review, or needs a formula rewrite.",
+      "You want a launch point for common actions such as editing drivers, adding formula cards, or exporting outputs.",
+    ],
+    actions: [
+      "Read the MODEL STATUS badge first. OK means all formula cards translate and all reasonability checks pass. NEEDS REVIEW means the model calculates, but a bound or split needs human attention. NEEDS REWRITE means at least one card cannot be interpreted safely.",
+      "Use the KPI row to understand the latest projected year. The app shows the final year in the active projection range, not necessarily 2029 if you change Settings.",
+      "Use the trend chart to see whether losses are narrowing, expanding, or reversing into profit across the annual horizon.",
+      "Open the coverage cards when you want to confirm which SDD v2 features are implemented in this static MVP and which parts remain backend scope.",
+    ],
+    checks: [
+      "If the dashboard is blank, reload the page once. The app rebuilds a default SDD v2 state if older local storage is incompatible.",
+      "If profit seems surprising, go to Assumptions and inspect the formula cards contributing to the largest line items.",
+      "If Unit Economics reconciliation differs from the main P&L, inspect Unit Econ Assumptions for a split warning.",
+    ],
+  },
+  {
+    view: "pl",
+    title: "P&L",
+    summary: "The P&L screen is a read-only output statement. It is the formal result of formula cards, drivers, projection settings, and the P&L line structure.",
+    useWhen: [
+      "You want to review revenue, cost, total revenue, total costs, and profit or loss by period.",
+      "You need to compare the annual view with the monthly view after changing granularity in Settings.",
+      "You want to verify that formula-card impacts are rolling into the correct line items.",
+    ],
+    actions: [
+      "Use Settings to select annual or monthly projection. Annual can run up to 10 years. Monthly can run up to 5 years and reconciles back to the annual model.",
+      "Read positive revenue lines as income. Cost lines are shown as negative values in the total section because they reduce profit.",
+      "Use Assumptions to change the mechanics behind the P&L. This screen intentionally does not allow direct overwriting of outputs.",
+      "Use Scenarios for PDF, Word, Excel, CSV, and JSON exports after the P&L has been reviewed.",
+    ],
+    checks: [
+      "A dash means the value is effectively zero after rounding.",
+      "If a line is missing, check Settings to see whether the line was removed or whether cards targeting it were parked.",
+      "If monthly values look too smooth, remember the static MVP spreads annual card values evenly across months unless the formula card itself changes the annual profile.",
+    ],
+  },
+  {
+    view: "assumptions",
+    title: "Assumptions",
+    summary: "Assumptions are stored as formula cards. Each card contains source text, target line, target years, method, params, dependencies, enabled state, and validation status.",
+    useWhen: [
+      "You need to add, change, disable, or inspect the assumptions that drive the model.",
+      "You need traceability from plain-English source text to the calculated P&L impact.",
+      "You need to see which assumptions require rewrite or review.",
+    ],
+    actions: [
+      "Click New Formula Card to create a new card. Start with source text that a finance reviewer can understand without opening the editor.",
+      "Choose the method carefully. Flat values use explicit annual values. Single value + growth compounds from a base year. % of driver multiplies a named driver by a rate. Per unit multiplies a driver by a unit rate. Fixed per year applies the same amount every covered year.",
+      "Use target years to apply an assumption to all years, one year, a range, or a discontinuous set of years.",
+      "Use the impact strip to check whether the signed contribution looks sensible before moving to the P&L.",
+      "Export Cards CSV when you want a reviewable register of source text, method, params, target, status, and validation hint.",
+    ],
+    checks: [
+      "needs_rewrite means the card cannot safely translate into a supported method, target, or driver.",
+      "needs_review means the card calculates, but it breaches a configured reasonability bound.",
+      "Disabled cards remain in the register for audit and scenario traceability but do not contribute to the P&L.",
+    ],
+  },
+  {
+    view: "drivers",
+    title: "Drivers",
+    summary: "Drivers are named independent input series used by driver-linked formula cards. They keep common business quantities in one place.",
+    useWhen: [
+      "You want one assumption such as programme size, guarantee volume, project count, or man-days to feed multiple formula cards.",
+      "You need to change a volume, count, or other operational input without editing every formula card.",
+      "You want the model to show the same driver values across years before those values feed revenue or cost logic.",
+    ],
+    actions: [
+      "Edit the driver name to make it reviewer-friendly, but keep the key stable because formula cards reference the key.",
+      "Set the unit so users know whether the driver is RM'000, count, days, or another basis.",
+      "Set the base value for the first projection year. Set growth percentage to roll that value forward annually.",
+      "Add a driver before creating formula cards that should use % of driver or per unit methods.",
+    ],
+    checks: [
+      "If a card shows Missing driver, restore or recreate the referenced driver key.",
+      "Large driver changes can move many formula cards at once. Save a scenario first if you want a clean before-and-after comparison.",
+      "Drivers are model inputs, not outputs. If you need a split by another calculated line, use Unit Econ Assumptions instead.",
+    ],
+  },
+  {
+    view: "unitEconomics",
+    title: "Unit Economics",
+    summary: "Unit Economics allocates the P&L across business segments while reconciling back to the main P&L total.",
+    useWhen: [
+      "You need to see which segment carries revenue, cost, or profit for a selected year.",
+      "You need mini P&Ls for segments such as Digital Banks, NBFI, and Ecosystem.",
+      "You want confidence that segment totals reconcile to the main P&L.",
+    ],
+    actions: [
+      "Choose the year in the Allocation matrix. The selected year controls the matrix and all mini P&Ls below it.",
+      "Read each P&L line across the segments, then compare the Total column to the main P&L line value.",
+      "Use the mini P&L cards for segment-level conversation. They are summaries, not separate models.",
+      "Change allocation methods in Unit Econ Assumptions, not directly on this output screen.",
+    ],
+    checks: [
+      "The Reconciles to P&L badge means the allocation matrix is normalizing back to the main P&L.",
+      "If a split method is flagged, the matrix may still reconcile by normalization, but the assumption should be reviewed.",
+      "A negative segment total indicates the segment carries more cost than revenue for that selected year.",
+    ],
+  },
+  {
+    view: "unitAssumptions",
+    title: "Unit Econ Assumptions",
+    summary: "Unit Econ Assumptions define how each P&L line is split across segments. The output appears in Unit Economics.",
+    useWhen: [
+      "You need to add, rename, or remove segment buckets.",
+      "You need to choose whether a line splits evenly, by ratio, by percentages, by per-segment quantity, or by another line's split.",
+      "You need to resolve split warnings before relying on segment-level outputs.",
+    ],
+    actions: [
+      "Add segments up to the SDD limit of 8. Keep segment names short enough for tables and exports.",
+      "Use ratio when values are relative weights. Use percentages when values are intended to sum to 100%. Use per-segment quantity when the numbers represent quantity or activity basis.",
+      "Use by another line split when a cost should follow the same allocation as a revenue or activity line.",
+      "Review the Status column. Percentage splits that do not sum to 100% are normalized, but flagged for review.",
+    ],
+    checks: [
+      "By-line cycles are blocked. If line A follows line B and line B follows line A, the app falls back to an even split and flags the issue.",
+      "Removing a segment removes its split values across all lines.",
+      "Changing split logic affects Unit Economics only; it does not change the main P&L total.",
+    ],
+  },
+  {
+    view: "scenarios",
+    title: "Scenarios",
+    summary: "Scenarios let you preserve model states, restore saved states, lock a case for review, and export outputs.",
+    useWhen: [
+      "You want to save the current combination of settings, drivers, cards, P&L lines, and Unit Economics splits.",
+      "You need to duplicate a case before trying a new assumption set.",
+      "You need to export the current model for review or distribution.",
+    ],
+    actions: [
+      "Click Save Scenario before making changes that you may want to reverse later.",
+      "Use Duplicate to create a copy name and keep the saved state available for comparison.",
+      "Use Lock when a scenario is under review. Locking disables editable controls while keeping outputs and exports accessible.",
+      "Use PDF / Print for the current app output, Word or Excel for document-style extracts, Cards CSV for assumption review, Audit CSV for activity review, and Scenario JSON for transfer or backup.",
+    ],
+    checks: [
+      "Scenario restores overwrite the current working state. Save first if the current state matters.",
+      "Exports are logged in the audit trail.",
+      "Static GitHub Pages stores scenarios in each user's browser storage, so a saved scenario is local to that browser profile.",
+    ],
+  },
+  {
+    view: "audit",
+    title: "Audit Trail",
+    summary: "The Audit Trail records meaningful model actions in plain English so reviewers can understand what changed and when.",
+    useWhen: [
+      "You need to review recent model activity.",
+      "You want evidence that exports, scenario saves, undo, redo, and model edits were recorded.",
+      "You need a CSV trail to attach to a review pack.",
+    ],
+    actions: [
+      "Read the latest entries at the top. Each entry includes an ID, timestamp, event, and user label.",
+      "Use Audit CSV from Scenarios to export the log.",
+      "Use undo and redo for meaningful state changes. Undo and redo actions themselves are logged.",
+    ],
+    checks: [
+      "The audit trail is append-oriented for transparency, but it is still stored in browser storage in this static MVP.",
+      "If the browser storage is cleared, local scenarios and audit entries are cleared too.",
+      "For shared governance, the future backend should persist audit records server-side.",
+    ],
+  },
+  {
+    view: "settings",
+    title: "Settings",
+    summary: "Settings control projection length, granularity, currency display, translator mode, reasonability bounds, and the P&L line structure.",
+    useWhen: [
+      "You need to switch between annual and monthly projection.",
+      "You need to change the start year, number of years, month start, units, or reasonability thresholds.",
+      "You need to add, rename, reorder, or remove P&L lines.",
+    ],
+    actions: [
+      "Set Annual years from 1 to 10. Set Monthly years from 1 to 5. Monthly uses 12 periods per year.",
+      "Keep translator backend on local for GitHub Pages. Live API is a placeholder for a future hosted backend.",
+      "Use Global annual bound and Max cost / revenue to tune validation sensitivity.",
+      "Add P&L lines when the business model needs a new output line. Rename lines for presentation. Reorder lines to improve readability.",
+      "Remove a line only when you understand the guardrail. Cards targeting that line are parked and disabled so they do not silently calculate into the wrong place.",
+    ],
+    checks: [
+      "Changing granularity affects how the P&L is displayed, but annual formula cards remain the source of truth.",
+      "Locked scenarios disable settings edits except for view-only selectors such as Unit Economics year.",
+      "Changing a line type between revenue and cost changes the sign treatment in totals and impact strips.",
+    ],
+  },
+];
+
+const QUICK_START_STEPS = [
+  {
+    view: "dashboard",
+    title: "1. Start with the Dashboard",
+    goal: "Confirm the scenario is loaded, the model status is OK, and the key financial result looks plausible.",
+    actions: ["Read the status badge.", "Check revenue and profit or loss for the final projected year.", "Open User Guide from the top bar if any dashboard flag needs explanation."],
+    exit: "Continue when the status is OK or when you know which screen owns the issue.",
+  },
+  {
+    view: "settings",
+    title: "2. Set the model frame",
+    goal: "Choose the projection horizon, granularity, units, and P&L line structure before editing assumptions.",
+    actions: ["Choose annual or monthly.", "Set start year and year count.", "Confirm P&L lines match the review pack you intend to produce."],
+    exit: "Continue when the P&L structure has the right rows and period length.",
+  },
+  {
+    view: "drivers",
+    title: "3. Update shared drivers",
+    goal: "Put common business inputs in one place so formula cards can reference them cleanly.",
+    actions: ["Review driver names and units.", "Update base values and growth percentages.", "Add missing drivers before creating dependent formula cards."],
+    exit: "Continue when driver series show the expected yearly values.",
+  },
+  {
+    view: "assumptions",
+    title: "4. Build formula cards",
+    goal: "Translate each business assumption into a traceable card with method, params, target line, and target years.",
+    actions: ["Create or edit formula cards.", "Use the local translator only as a helper, then review the emitted method and params.", "Resolve needs_rewrite before using outputs."],
+    exit: "Continue when every active card is OK or intentionally marked for review.",
+  },
+  {
+    view: "pl",
+    title: "5. Review the P&L",
+    goal: "Confirm the calculated model output before segment allocation or exports.",
+    actions: ["Scan total revenue, total costs, and profit or loss.", "Compare annual and monthly views if needed.", "Return to assumptions for any line that looks wrong."],
+    exit: "Continue when the P&L tells the story you expect.",
+  },
+  {
+    view: "unitAssumptions",
+    title: "6. Configure segment splits",
+    goal: "Define how P&L lines allocate across Unit Economics segments.",
+    actions: ["Confirm segment names.", "Choose split methods by line.", "Fix percentage totals or by-line cycle warnings."],
+    exit: "Continue when split statuses are OK or reviewed.",
+  },
+  {
+    view: "unitEconomics",
+    title: "7. Read Unit Economics",
+    goal: "Use the segment matrix and mini P&Ls to explain where economics land by segment.",
+    actions: ["Pick the review year.", "Check each segment contribution.", "Confirm the matrix reconciles to the main P&L."],
+    exit: "Continue when the segment outputs are ready for conversation.",
+  },
+  {
+    view: "scenarios",
+    title: "8. Save, lock, and export",
+    goal: "Preserve the case and produce review files.",
+    actions: ["Save the scenario.", "Lock it if it is ready for review.", "Export PDF, Word, Excel, CSV, or JSON as needed."],
+    exit: "Continue when the scenario is saved and the required files are exported.",
+  },
+  {
+    view: "audit",
+    title: "9. Check the audit trail",
+    goal: "Confirm the app recorded the key changes and exports.",
+    actions: ["Review recent events.", "Export Audit CSV if needed.", "Use the trail to support review notes."],
+    exit: "Finish when the audit evidence is sufficient for the review pack.",
+  },
+];
+
+function line(key, name, type) {
+  return { key, name, type, active: true, bound: type === "cost" ? 60000 : 80000 };
+}
+
+function driver(key, name, unit, baseValue, growthRate, source) {
+  return { key, name, unit, baseValue, growthRate, source };
+}
+
+function card(id, category, sourceText, lineKey, method, params, extra = {}) {
+  return {
+    id,
+    category,
+    source_text: sourceText,
+    enabled: extra.enabled !== false,
+    target: { line: lineKey, years: extra.years || "all" },
+    method,
+    params,
+    depends_on: [],
+    status: "ok",
+    hint: "",
+    created_at: extra.created_at || "2026-06-27",
+    updated_at: extra.updated_at || "2026-06-27",
+  };
+}
 
 let state = loadState();
 let currentView = "dashboard";
+let lastContextView = "dashboard";
 let editorDraft = null;
 let undoStack = [];
 let redoStack = [];
@@ -219,11 +424,14 @@ const els = {
   dashboardContent: document.querySelector("#dashboardContent"),
   assumptionsContent: document.querySelector("#assumptionsContent"),
   plContent: document.querySelector("#plContent"),
-  validationContent: document.querySelector("#validationContent"),
+  driversContent: document.querySelector("#driversContent"),
+  unitEconomicsContent: document.querySelector("#unitEconomicsContent"),
+  unitAssumptionsContent: document.querySelector("#unitAssumptionsContent"),
   scenariosContent: document.querySelector("#scenariosContent"),
-  exportsContent: document.querySelector("#exportsContent"),
   auditContent: document.querySelector("#auditContent"),
-  sourcesContent: document.querySelector("#sourcesContent"),
+  settingsContent: document.querySelector("#settingsContent"),
+  guideContent: document.querySelector("#guideContent"),
+  quickStartContent: document.querySelector("#quickStartContent"),
   editorPanel: document.querySelector("#editorPanel"),
   assumptionForm: document.querySelector("#assumptionForm"),
   editorTitle: document.querySelector("#editorTitle"),
@@ -244,204 +452,192 @@ document.querySelector("#lockScenarioButton").addEventListener("click", toggleLo
 
 render();
 
-function assumption(id, category, title, targetLine, method, active, extra = {}) {
-  return {
-    id,
-    category,
-    subCategory: extra.subCategory || "",
-    title,
-    text: extra.text || "",
-    targetLine,
-    method,
-    active,
-    startYear: extra.startYear || 2025,
-    endYear: extra.endYear || 2029,
-    amount: extra.amount ?? null,
-    endValue: extra.endValue ?? null,
-    growthRate: extra.growthRate ?? 0,
-    rate: extra.rate ?? 0,
-    volume: extra.volume ?? 0,
-    price: extra.price ?? 0,
-    sourceLine: extra.sourceLine || "",
-    oneOffYear: extra.oneOffYear || 2025,
-    values: extra.values || {},
-    source: extra.source || "User-entered",
-    templateUsed: extra.templateUsed || "",
-    combinationLogic: extra.combinationLogic || "Add",
-    validationStatus: "Parsed",
-    reasonabilityStatus: "Not run",
-    confidence: extra.confidence ?? 0.75,
-    version: 1,
-    createdAt: extra.createdAt || "2026-06-23",
-    modifiedAt: extra.modifiedAt || "2026-06-23",
-    createdBy: USER_NAME,
-    modifiedBy: USER_NAME,
-    auditRef: extra.auditRef || "AUD-001",
-  };
-}
-
 function loadState() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return {
-        ...parsed,
-        audit: parsed.audit || initialAudit(),
-        scenarios: parsed.scenarios || [],
-      };
-    }
+    if (saved) return migrateState(JSON.parse(saved));
   } catch {}
 
   const initial = {
-    controls: { ...DEFAULT_CONTROLS },
-    assumptions: clone(DEFAULT_ASSUMPTIONS),
+    settings: clone(DEFAULT_SETTINGS),
+    lines: clone(DEFAULT_LINES),
+    drivers: clone(DEFAULT_DRIVERS),
+    cards: clone(DEFAULT_CARDS),
+    unitEconomics: {
+      segments: clone(DEFAULT_SEGMENTS),
+      splits: defaultSplits(DEFAULT_LINES),
+    },
     scenarios: [],
     audit: initialAudit(),
   };
   initial.scenarios.push({
     id: "SCN-BASE",
-    name: "S2b Reference Case",
-    savedAt: "2026-06-23 22:45",
-    locked: false,
-    note: "Seed scenario built from the reference PDF and workbook.",
+    name: initial.settings.scenarioName,
+    savedAt: "2026-06-27 16:30",
     snapshot: snapshotFrom(initial),
+    note: "Seed SDD v2 scenario.",
   });
   return initial;
 }
 
+function migrateState(saved) {
+  if (saved.settings && saved.cards && saved.lines) return saved;
+  return loadFreshState();
+}
+
+function loadFreshState() {
+  return {
+    settings: clone(DEFAULT_SETTINGS),
+    lines: clone(DEFAULT_LINES),
+    drivers: clone(DEFAULT_DRIVERS),
+    cards: clone(DEFAULT_CARDS),
+    unitEconomics: { segments: clone(DEFAULT_SEGMENTS), splits: defaultSplits(DEFAULT_LINES) },
+    scenarios: [],
+    audit: initialAudit(),
+  };
+}
+
+function defaultSplits(lines) {
+  const out = {};
+  for (const item of lines) {
+    out[item.key] = { method: item.type === "revenue" ? "ratio" : "by_line", values: { digital_banks: 2, nbfi: 5, ecosystem: 3 }, byLine: "digital_guarantee" };
+    if (item.key === "digital_guarantee") out[item.key] = { method: "ratio", values: { digital_banks: 1, nbfi: 6, ecosystem: 3 }, byLine: "" };
+    if (item.key === "operating_expenses") out[item.key] = { method: "per_segment_quantity", values: { digital_banks: 12, nbfi: 18, ecosystem: 10 }, byLine: "" };
+    if (item.key === "expected_credit_loss") out[item.key] = { method: "percentages", values: { digital_banks: 15, nbfi: 75, ecosystem: 10 }, byLine: "" };
+  }
+  return out;
+}
+
 function initialAudit() {
   return [
-    {
-      id: "AUD-001",
-      timestamp: "2026-06-23 22:45",
-      action: "Created scenario",
-      target: "S2b Reference Case",
-      before: "-",
-      after: "Reference assumptions loaded",
-      user: USER_NAME,
-      note: "Seeded from guide, S2b projection PDF, and digital guarantee revenue workbook.",
-    },
-    {
-      id: "AUD-002",
-      timestamp: "2026-06-23 22:46",
-      action: "Applied rule-based parser",
-      target: "Reference assumptions",
-      before: "Source data",
-      after: "Structured drivers",
-      user: USER_NAME,
-      note: "AI-ready parser field retained; no external AI call is required for this local MVP.",
-    },
+    auditEntry("Created SDD v2 state", "Model", "-", "Formula cards, drivers, P&L lines, Unit Economics"),
+    auditEntry("Loaded local translator", "Translator.translate()", "-", "local deterministic parser"),
   ];
 }
 
 function render() {
-  const calc = calculateModel();
-  const validation = validateModel(calc);
-  els.scenarioPill.textContent = state.controls.scenarioName;
-  els.dashboardTitle.textContent = state.controls.scenarioName;
+  const model = calculateModel();
+  const validation = validateModel(model);
+  const unit = calculateUnitEconomics(model, validation);
+
+  els.scenarioPill.textContent = state.settings.scenarioName;
+  els.dashboardTitle.textContent = state.settings.scenarioName;
   renderStatus(validation);
-  renderDashboard(calc, validation);
-  renderAssumptions(calc, validation);
-  renderPL(calc);
-  renderValidation(calc, validation);
-  renderScenarios();
-  renderExports(calc, validation);
+  renderDashboard(model, validation, unit);
+  renderPL(model);
+  renderAssumptions(model, validation);
+  renderDrivers(model);
+  renderUnitEconomics(model, validation, unit);
+  renderUnitAssumptions(validation);
+  renderScenarios(model, validation);
   renderAudit();
-  renderSources();
+  renderSettings(validation);
+  renderQuickStart();
+  renderGuide();
   updateButtons();
   persist();
 }
 
 function renderStatus(validation) {
-  const failed = validation.checks.some((check) => check.status === "FAIL");
-  const warned = validation.checks.some((check) => check.status === "WARN");
-  const status = failed ? "FAIL" : warned ? "WARNING" : "PASS";
-  els.modelStatusBadge.textContent = `MODEL STATUS: ${status}`;
-  els.modelStatusBadge.className = `status-badge ${failed ? "fail" : warned ? "warn" : "pass"}`;
+  const hasRewrite = validation.cards.some((item) => item.status === "needs_rewrite");
+  const hasReview = validation.cards.some((item) => item.status === "needs_review") || validation.splits.some((item) => item.status === "needs_review");
+  const label = hasRewrite ? "NEEDS REWRITE" : hasReview ? "NEEDS REVIEW" : "OK";
+  els.modelStatusBadge.textContent = `MODEL STATUS: ${label}`;
+  els.modelStatusBadge.className = `status-badge ${hasRewrite ? "fail" : hasReview ? "warn" : "pass"}`;
 }
 
-function renderDashboard(calc, validation) {
+function renderDashboard(model, validation, unit) {
   const years = getYears();
-  const lastYear = years.at(-1);
-  const pbtSeries = years.map((year) => calc.derived.pbt[year]);
-  const revenueSeries = years.map((year) => calc.derived.operatingRevenue[year]);
-  const activeCount = state.assumptions.filter((item) => item.active).length;
-  const warningCount = validation.assumptions.filter((item) => item.status === "Warning").length;
-  const pbtCumulative = years.reduce((sum, year) => sum + calc.derived.pbt[year], 0);
-  const breakeven = years.find((year) => calc.derived.pbt[year] >= 0) || "-";
+  const lastYear = years[years.length - 1];
+  const activeCards = state.cards.filter((item) => item.enabled).length;
+  const rewriteCount = validation.cards.filter((item) => item.status === "needs_rewrite").length;
+  const reviewCount = validation.cards.filter((item) => item.status === "needs_review").length + validation.splits.filter((item) => item.status === "needs_review").length;
+  const pbt = model.annual.total[lastYear] || 0;
+  const revenue = model.annual.revenue[lastYear] || 0;
+  const lossTotal = years.reduce((sum, year) => sum + Math.min(0, model.annual.total[year] || 0), 0);
+  const breakeven = years.find((year) => (model.annual.total[year] || 0) >= 0) || "-";
 
   els.dashboardContent.innerHTML = `
     <div class="grid dashboard-grid">
       <div class="grid">
         <div class="kpi-grid">
-          ${kpi("Operating revenue", money(calc.derived.operatingRevenue[lastYear]), `${lastYear} ${state.controls.units}`)}
-          ${kpi("PBT", money(calc.derived.pbt[lastYear]), `${lastYear} ${state.controls.units}`, calc.derived.pbt[lastYear] >= 0 ? "positive" : "negative")}
-          ${kpi("Cumulative PBT", money(pbtCumulative), `${years[0]}-${lastYear} ${state.controls.units}`, pbtCumulative >= 0 ? "positive" : "negative")}
-          ${kpi("Breakeven year", String(breakeven), "First year with non-negative PBT")}
+          ${kpi("Revenue", money(revenue), `${lastYear} ${state.settings.units}`)}
+          ${kpi("Profit / (Loss)", money(pbt), `${lastYear} ${state.settings.units}`, pbt >= 0 ? "positive" : "negative")}
+          ${kpi("Cumulative losses", money(lossTotal), `${years[0]}-${lastYear}`, lossTotal < 0 ? "negative" : "positive")}
+          ${kpi("Breakeven", String(breakeven), "First non-negative year")}
         </div>
-
         <div class="panel">
           <div class="panel-header">
-            <h3 class="panel-title">Revenue and PBT trend</h3>
-            <span class="mini-badge ${warningCount ? "warn" : "pass"}">${warningCount} warnings</span>
+            <h3 class="panel-title">Annual roll-up trend</h3>
+            <span class="mini-badge ${reviewCount || rewriteCount ? "warn" : "pass"}">${reviewCount + rewriteCount} flags</span>
           </div>
           <div class="panel-body">
             ${lineChart(years, [
-              { label: "Operating revenue", values: revenueSeries, color: "#0f5ed7" },
-              { label: "PBT", values: pbtSeries, color: "#b3261e" },
+              { label: "Revenue", values: years.map((year) => model.annual.revenue[year] || 0), color: "#0f5ed7" },
+              { label: "Profit / (Loss)", values: years.map((year) => model.annual.total[year] || 0), color: "#b3261e" },
             ])}
             <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:#0f5ed7"></span>Operating revenue</span>
-              <span class="legend-item"><span class="swatch" style="background:#b3261e"></span>PBT</span>
+              <span class="legend-item"><span class="swatch" style="background:#0f5ed7"></span>Revenue</span>
+              <span class="legend-item"><span class="swatch" style="background:#b3261e"></span>Profit / (Loss)</span>
             </div>
           </div>
         </div>
-
         <div class="panel">
           <div class="panel-header">
-            <h3 class="panel-title">P&L preview</h3>
-            <button class="secondary-button" data-nav="pl" type="button">Open P&amp;L</button>
+            <h3 class="panel-title">SDD v2 coverage</h3>
+            <button class="secondary-button" data-nav="guide" type="button">Open Guide</button>
           </div>
           <div class="panel-body">
-            ${plTable(calc, true)}
+            <div class="coverage-grid">
+              ${coverage("Formula cards", "Built", "Cards use source_text, target, method, params, depends_on, status.")}
+              ${coverage("Granularity", "Built", "Annual up to 10 years; monthly up to 5 years.")}
+              ${coverage("Drivers", "Built", "Named independent input series for driver methods.")}
+              ${coverage("P&L lines", "Built", "Rename, add, reorder, remove with parking.")}
+              ${coverage("Unit Economics", "Built", "Up to 8 segments, split assumptions, matrix and mini-P&Ls.")}
+              ${coverage("Live AI backend", "Stub", "Translator seam exists; static hosting has no /api/translate endpoint.")}
+            </div>
           </div>
         </div>
       </div>
-
       <div class="grid">
         <div class="panel">
           <div class="panel-header">
-            <h3 class="panel-title">Control panel</h3>
-            <span class="mini-badge ${state.controls.locked ? "warn" : "pass"}">${state.controls.locked ? "Locked" : "Editable"}</span>
+            <h3 class="panel-title">Control summary</h3>
+            <span class="mini-badge ${state.settings.locked ? "warn" : "pass"}">${state.settings.locked ? "Locked" : "Editable"}</span>
           </div>
           <div class="panel-body">
-            ${controlPanel()}
+            <table>
+              <tbody>
+                <tr><td>Granularity</td><td>${escapeHTML(state.settings.granularity)}</td></tr>
+                <tr><td>Projection</td><td>${state.settings.granularity === "monthly" ? `${state.settings.monthlyYearCount} years x 12 months` : `${state.settings.yearCount} years`}</td></tr>
+                <tr><td>Translator</td><td>${escapeHTML(state.settings.translatorBackend)}</td></tr>
+                <tr><td>Cards</td><td>${activeCards} active / ${state.cards.length} total</td></tr>
+                <tr><td>Segments</td><td>${state.unitEconomics.segments.length}</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
-
         <div class="panel">
           <div class="panel-header">
-            <h3 class="panel-title">Assumption state</h3>
-            <button class="secondary-button" data-nav="assumptions" type="button">Open Register</button>
-          </div>
-          <div class="panel-body">
-            <div class="kpi-grid two">
-              ${kpi("Active assumptions", activeCount, "Affecting the model")}
-              ${kpi("Inactive assumptions", state.assumptions.length - activeCount, "Retained for audit")}
-              ${kpi("Validation warnings", warningCount, "Need review", warningCount ? "negative" : "positive")}
-              ${kpi("Exports available", "4", "JSON, CSV, Excel-ready, print/PDF")}
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">
-            <h3 class="panel-title">MVP coverage</h3>
+            <h3 class="panel-title">Unit Economics reconciliation</h3>
           </div>
           <div class="panel-body">
             <div class="notice">
-              Single-user source-of-truth app with assumption toggles, structured drivers, scenario snapshots, validation, undo/redo, and exportable audit trail.
+              Matrix total for ${state.settings.unitYear}: ${money(unit.totalByYear[state.settings.unitYear] || 0)}. Main P&L total: ${money(model.annual.total[state.settings.unitYear] || 0)}.
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h3 class="panel-title">Quick actions</h3>
+          </div>
+          <div class="panel-body">
+            <div class="button-row">
+              <button class="primary-button" data-open-new-card type="button">New Formula Card</button>
+              <button class="secondary-button" data-nav="drivers" type="button">Edit Drivers</button>
+              <button class="secondary-button" data-export="excel" type="button">Excel</button>
+              <button class="secondary-button" data-export="word" type="button">Word</button>
+              <button class="ghost-button" data-export="print" type="button">PDF / Print</button>
             </div>
           </div>
         </div>
@@ -450,81 +646,88 @@ function renderDashboard(calc, validation) {
   `;
 }
 
-function renderAssumptions(calc, validation) {
+function renderPL(model) {
+  const periods = getDisplayPeriods();
+  els.plContent.innerHTML = `
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">Profit & Loss statement</h3>
+        <span class="mini-badge">${state.settings.granularity} / ${state.settings.units}</span>
+      </div>
+      <div class="panel-body">${plTable(model, periods)}</div>
+    </div>
+  `;
+}
+
+function renderAssumptions(model, validation) {
   const years = getYears();
-  const rows = state.assumptions
-    .map((item) => {
-      const generated = calculateAssumptionValues(item, years, calc, { preview: true });
-      const status = validation.assumptions.find((entry) => entry.id === item.id) || {};
-      const impact = years.reduce((sum, year) => sum + (generated[year] || 0), 0);
-      return `
-        <tr data-row-id="${item.id}">
-          <td><button class="ghost-button" data-edit="${item.id}" type="button">${escapeHTML(item.id)}</button></td>
-          <td>${escapeHTML(item.category)}</td>
-          <td><strong>${escapeHTML(item.title)}</strong><br><span class="muted">${escapeHTML(item.targetLine)}</span></td>
-          <td>${escapeHTML(METHOD_LABELS[item.method] || item.method)}</td>
-          <td>
-            <label class="toggle">
-              <input class="assumption-toggle" data-id="${item.id}" type="checkbox" ${item.active ? "checked" : ""} ${state.controls.locked ? "disabled" : ""}>
-              ${item.active ? "Active" : "Inactive"}
-            </label>
-          </td>
-          <td class="status-col"><span class="mini-badge ${status.className || "pass"}">${escapeHTML(status.status || "OK")}</span></td>
-          <td class="number ${impact < 0 ? "negative" : "positive"}">${money(impact)}</td>
-          ${years.map((year) => `<td class="number formula-cell">${money(generated[year] || 0)}</td>`).join("")}
-        </tr>
-      `;
-    })
-    .join("");
+  const rows = state.cards.map((item) => {
+    const v = validation.cards.find((entry) => entry.id === item.id) || { status: "ok", className: "pass", hint: "" };
+    const annual = model.cardAnnual[item.id] || blankYearSeries(years);
+    const signed = signedAnnualForCard(item, annual);
+    return `
+      <tr data-card="${item.id}">
+        <td><button class="ghost-button" data-edit-card="${item.id}" type="button">${escapeHTML(item.id)}</button></td>
+        <td><label class="toggle"><input data-toggle-card="${item.id}" type="checkbox" ${item.enabled ? "checked" : ""} ${state.settings.locked ? "disabled" : ""}> ${item.enabled ? "On" : "Off"}</label></td>
+        <td>${escapeHTML(item.category)}</td>
+        <td><strong>${escapeHTML(sourceTitle(item.source_text))}</strong><br><span class="muted">${escapeHTML(item.source_text)}</span></td>
+        <td>${escapeHTML(lineName(item.target.line))}<br><span class="muted">${targetYearsLabel(item.target.years)}</span></td>
+        <td>${escapeHTML(METHOD_LABELS[item.method] || item.method)}<br><span class="muted">${escapeHTML(operationText(item))}</span></td>
+        <td><span class="mini-badge ${v.className}">${escapeHTML(v.status)}</span><br><span class="muted">${escapeHTML(v.hint || "")}</span></td>
+        <td>${impactStrip(years, signed)}</td>
+      </tr>
+    `;
+  }).join("");
 
   els.assumptionsContent.innerHTML = `
     <div class="panel">
       <div class="panel-header">
-        <h3 class="panel-title">Register</h3>
-        <span class="mini-badge">Generated values in ${state.controls.units}</span>
+        <h3 class="panel-title">Formula card register</h3>
+        <div class="inline-actions">
+          <button class="primary-button" data-open-new-card type="button">New Formula Card</button>
+          <button class="secondary-button" data-export="cardsCsv" type="button">Cards CSV</button>
+        </div>
       </div>
       <div class="panel-body">
         <div class="table-wrap">
           <table>
             <thead>
-              <tr>
-                <th>ID</th>
-                <th>Category</th>
-                <th>Assumption</th>
-                <th>Method</th>
-                <th>Status</th>
-                <th>Validation</th>
-                <th class="number">5Y impact</th>
-                ${years.map((year) => `<th class="number">${year}</th>`).join("")}
-              </tr>
+              <tr><th>ID</th><th>Enabled</th><th>Category</th><th>Source text</th><th>Target</th><th>Operation</th><th>Status</th><th>Per-period impact</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
         </div>
       </div>
     </div>
+  `;
+}
 
-    <div class="grid two-col" style="margin-top:14px">
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Assumption library</h3>
-        </div>
-        <div class="panel-body">
-          ${libraryTable()}
-        </div>
+function renderDrivers(model) {
+  const years = getYears();
+  const rows = state.drivers.map((item) => {
+    const series = model.drivers[item.key] || blankYearSeries(years);
+    return `
+      <tr>
+        <td>${escapeHTML(item.key)}</td>
+        <td><input class="grid-input" data-driver-field="${item.key}:name" value="${escapeAttr(item.name)}" ${state.settings.locked ? "disabled" : ""}></td>
+        <td><input class="grid-input" data-driver-field="${item.key}:unit" value="${escapeAttr(item.unit)}" ${state.settings.locked ? "disabled" : ""}></td>
+        <td><input class="grid-input number-input" type="number" step="any" data-driver-field="${item.key}:baseValue" value="${item.baseValue}" ${state.settings.locked ? "disabled" : ""}></td>
+        <td><input class="grid-input number-input" type="number" step="any" data-driver-field="${item.key}:growthRatePercent" value="${round(item.growthRate * 100, 2)}" ${state.settings.locked ? "disabled" : ""}></td>
+        ${years.map((year) => `<td class="number linked-cell">${money(series[year])}</td>`).join("")}
+      </tr>
+    `;
+  }).join("");
+  els.driversContent.innerHTML = `
+    <div class="panel">
+      <div class="panel-header">
+        <h3 class="panel-title">Named driver series</h3>
+        <button class="primary-button" data-add-driver type="button">Add Driver</button>
       </div>
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Financial model color convention</h3>
-        </div>
-        <div class="panel-body">
+      <div class="panel-body">
+        <div class="table-wrap">
           <table>
-            <tbody>
-              <tr><td class="input-cell">Blue text / yellow fill</td><td>Editable inputs and scenario drivers</td></tr>
-              <tr><td class="formula-cell">Black text</td><td>Formula outputs and calculated values</td></tr>
-              <tr><td class="linked-cell">Green text</td><td>Linked references within the model</td></tr>
-              <tr><td class="negative">Red text</td><td>Warnings, negative values, and validation failures</td></tr>
-            </tbody>
+            <thead><tr><th>Key</th><th>Name</th><th>Unit</th><th class="number">Base</th><th class="number">Growth %</th>${years.map((year) => `<th class="number">${year}</th>`).join("")}</tr></thead>
+            <tbody>${rows}</tbody>
           </table>
         </div>
       </div>
@@ -532,227 +735,263 @@ function renderAssumptions(calc, validation) {
   `;
 }
 
-function renderPL(calc) {
-  els.plContent.innerHTML = `
+function renderUnitEconomics(model, validation, unit) {
+  const year = Number(state.settings.unitYear || getYears()[0]);
+  const segments = state.unitEconomics.segments;
+  const lineRows = state.lines.map((lineItem) => {
+    const lineTotal = model.annual.lines[lineItem.key]?.[year] || 0;
+    return `
+      <tr>
+        <td class="sticky-col">${escapeHTML(lineItem.name)}</td>
+        ${segments.map((segment) => `<td class="number">${money(unit.lineSegment[lineItem.key]?.[segment.key]?.[year] || 0)}</td>`).join("")}
+        <td class="number total-cell">${money(lineTotal)}</td>
+      </tr>
+    `;
+  }).join("");
+  const segmentCards = segments.map((segment) => miniPL(segment, unit, year)).join("");
+  els.unitEconomicsContent.innerHTML = `
     <div class="grid">
       <div class="panel">
         <div class="panel-header">
-          <h3 class="panel-title">Statement Profit and Loss</h3>
-          <span class="mini-badge">${state.controls.units}</span>
+          <h3 class="panel-title">Allocation matrix</h3>
+          <div class="inline-actions">
+            <label class="form-field inline-field"><span>Year</span><select class="settings-input" data-setting="unitYear">${getYears().map((item) => `<option value="${item}" ${item === year ? "selected" : ""}>${item}</option>`).join("")}</select></label>
+            <span class="mini-badge ${validation.splits.some((item) => item.status === "needs_review") ? "warn" : "pass"}">Reconciles to P&L</span>
+          </div>
         </div>
-        <div class="panel-body">${plTable(calc, false)}</div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th class="sticky-col">P&L line</th>${segments.map((segment) => `<th class="number">${escapeHTML(segment.name)}</th>`).join("")}<th class="number">Total</th></tr></thead>
+              <tbody>${lineRows}<tr class="total-row"><td class="sticky-col">Profit / (Loss)</td>${segments.map((segment) => `<td class="number">${money(unit.segmentTotal[segment.key]?.[year] || 0)}</td>`).join("")}<td class="number">${money(unit.totalByYear[year] || 0)}</td></tr></tbody>
+            </table>
+          </div>
+        </div>
       </div>
+      <div class="mini-pl-grid">${segmentCards}</div>
+    </div>
+  `;
+}
+
+function renderUnitAssumptions(validation) {
+  const segments = state.unitEconomics.segments;
+  const lockedAttr = state.settings.locked ? "disabled" : "";
+  const segmentRows = segments.map((segment) => `
+    <tr>
+      <td>${escapeHTML(segment.key)}</td>
+      <td><input class="grid-input" data-segment-name="${segment.key}" value="${escapeAttr(segment.name)}" ${state.settings.locked ? "disabled" : ""}></td>
+      <td><button class="danger-button" data-remove-segment="${segment.key}" type="button" ${state.settings.locked ? "disabled" : ""}>Remove</button></td>
+    </tr>
+  `).join("");
+  const splitRows = state.lines.map((lineItem) => {
+    const split = splitFor(lineItem.key);
+    const splitFlag = validation.splits.find((item) => item.lineKey === lineItem.key);
+    return `
+      <tr>
+        <td>${escapeHTML(lineItem.name)}</td>
+        <td>${selectHTML(`data-split-method="${lineItem.key}" ${lockedAttr}`, split.method, ["even", "ratio", "percentages", "per_segment_quantity", "by_line"], splitMethodLabel)}</td>
+        ${segments.map((segment) => `<td><input class="grid-input number-input" type="number" step="any" data-split-value="${lineItem.key}:${segment.key}" value="${split.values?.[segment.key] ?? ""}" ${split.method === "by_line" || state.settings.locked ? "disabled" : ""}></td>`).join("")}
+        <td>${selectHTML(`data-split-byline="${lineItem.key}" ${state.settings.locked || split.method !== "by_line" ? "disabled" : ""}`, split.byLine || "", ["", ...state.lines.map((item) => item.key)], (key) => key ? lineName(key) : "None")}</td>
+        <td><span class="mini-badge ${splitFlag?.className || "pass"}">${escapeHTML(splitFlag?.status || "ok")}</span><br><span class="muted">${escapeHTML(splitFlag?.hint || "")}</span></td>
+      </tr>
+    `;
+  }).join("");
+  els.unitAssumptionsContent.innerHTML = `
+    <div class="grid">
       <div class="panel">
         <div class="panel-header">
-          <h3 class="panel-title">Financial strength</h3>
-          <span class="mini-badge">Reference metrics</span>
+          <h3 class="panel-title">Segments</h3>
+          <button class="primary-button" data-add-segment type="button" ${segments.length >= 8 ? "disabled" : ""}>Add Segment</button>
         </div>
-        <div class="panel-body">${financialStrengthTable(calc)}</div>
+        <div class="panel-body">
+          <div class="table-wrap"><table><thead><tr><th>Key</th><th>Name</th><th>Action</th></tr></thead><tbody>${segmentRows}</tbody></table></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">Per-line allocation splits</h3></div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>P&L line</th><th>Method</th>${segments.map((segment) => `<th>${escapeHTML(segment.name)}</th>`).join("")}<th>By line</th><th>Status</th></tr></thead>
+              <tbody>${splitRows}</tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
   `;
 }
 
-function renderValidation(calc, validation) {
-  const assumptionRows = validation.assumptions
-    .map((item) => `
-      <tr>
-        <td>${escapeHTML(item.id)}</td>
-        <td>${escapeHTML(item.title)}</td>
-        <td><span class="mini-badge ${item.className}">${escapeHTML(item.status)}</span></td>
-        <td>${escapeHTML(item.reason)}</td>
-        <td>${escapeHTML(item.fix)}</td>
-      </tr>
-    `)
-    .join("");
-
-  const checkRows = validation.checks
-    .map((check) => `
-      <tr>
-        <td>${escapeHTML(check.check)}</td>
-        <td class="number">${check.delta === null ? "-" : money(check.delta)}</td>
-        <td><span class="mini-badge ${check.status === "OK" ? "pass" : check.status === "WARN" ? "warn" : "fail"}">${check.status}</span></td>
-        <td>${escapeHTML(check.where)}</td>
-        <td>${escapeHTML(check.notes)}</td>
-      </tr>
-    `)
-    .join("");
-
-  els.validationContent.innerHTML = `
-    <div class="grid two-col">
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Workbook-level checks</h3>
-        </div>
-        <div class="panel-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Check</th><th class="number">Delta</th><th>Status</th><th>Where to fix</th><th>Notes</th></tr></thead>
-              <tbody>${checkRows}</tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Assumption validation</h3>
-        </div>
-        <div class="panel-body">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>ID</th><th>Assumption</th><th>Status</th><th>Reason</th><th>Suggested fix</th></tr></thead>
-              <tbody>${assumptionRows}</tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function renderScenarios() {
-  const rows = state.scenarios
-    .map((scenario) => `
-      <tr>
-        <td><strong>${escapeHTML(scenario.name)}</strong><br><span class="muted">${escapeHTML(scenario.id)}</span></td>
-        <td>${escapeHTML(scenario.savedAt)}</td>
-        <td>${scenario.locked ? "Locked" : "Editable"}</td>
-        <td>${escapeHTML(scenario.note || "-")}</td>
-        <td><button class="secondary-button" data-restore-scenario="${scenario.id}" type="button">Restore</button></td>
-      </tr>
-    `)
-    .join("");
-
+function renderScenarios(model, validation) {
+  const scenarioRows = state.scenarios.map((item) => `
+    <tr>
+      <td><strong>${escapeHTML(item.name)}</strong><br><span class="muted">${escapeHTML(item.id)}</span></td>
+      <td>${escapeHTML(item.savedAt)}</td>
+      <td>${escapeHTML(item.note || "-")}</td>
+      <td><button class="secondary-button" data-restore-scenario="${item.id}" type="button">Restore</button></td>
+    </tr>
+  `).join("");
   els.scenariosContent.innerHTML = `
-    <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">Saved scenarios</h3>
-        <span class="mini-badge">${state.scenarios.length} saved</span>
-      </div>
-      <div class="panel-body">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Scenario</th><th>Saved</th><th>Lock state</th><th>Notes</th><th>Action</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  `;
-  document.querySelector("#lockScenarioButton").textContent = state.controls.locked ? "Unlock" : "Lock";
-}
-
-function renderExports(calc, validation) {
-  const warnings = validation.assumptions.filter((item) => item.status === "Warning").length;
-  els.exportsContent.innerHTML = `
     <div class="grid two-col">
       <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Available exports</h3>
-          <span class="mini-badge ${warnings ? "warn" : "pass"}">${warnings ? "Review warnings" : "Ready"}</span>
-        </div>
+        <div class="panel-header"><h3 class="panel-title">Saved scenarios</h3><span class="mini-badge">${state.scenarios.length} saved</span></div>
+        <div class="panel-body"><div class="table-wrap"><table><thead><tr><th>Scenario</th><th>Saved</th><th>Notes</th><th>Action</th></tr></thead><tbody>${scenarioRows}</tbody></table></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">Exports</h3><span class="mini-badge">Logged actions</span></div>
         <div class="panel-body">
           <div class="button-row">
-            <button class="primary-button" data-export="json" type="button">Download JSON</button>
-            <button class="secondary-button" data-export="assumptionsCsv" type="button">Assumptions CSV</button>
+            <button class="primary-button" data-export="pdf" type="button">PDF / Print</button>
+            <button class="secondary-button" data-export="word" type="button">Word</button>
+            <button class="secondary-button" data-export="excel" type="button">Excel</button>
+            <button class="secondary-button" data-export="cardsCsv" type="button">Cards CSV</button>
             <button class="secondary-button" data-export="auditCsv" type="button">Audit CSV</button>
-            <button class="secondary-button" data-export="excel" type="button">Excel-ready File</button>
-            <button class="ghost-button" data-export="print" type="button">Print / Save PDF</button>
+            <button class="ghost-button" data-export="json" type="button">Scenario JSON</button>
           </div>
-          <p class="muted">Exports are generated from the web-app state. The app remains the controlled source of truth.</p>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Export contents</h3>
-        </div>
-        <div class="panel-body">
-          <table>
-            <tbody>
-              <tr><td>Scenario summary</td><td>Included</td></tr>
-              <tr><td>Control settings</td><td>Included</td></tr>
-              <tr><td>Active and inactive assumptions</td><td>Included</td></tr>
-              <tr><td>Full P&amp;L statement</td><td>Included</td></tr>
-              <tr><td>Validation warnings</td><td>Included</td></tr>
-              <tr><td>Audit trail</td><td>${state.controls.includeAuditTrail ? "Included" : "Excluded"}</td></tr>
-            </tbody>
-          </table>
+          <p class="muted">Exports follow the current ${escapeHTML(state.settings.granularity)} view where applicable. PDF uses the browser print dialog.</p>
         </div>
       </div>
     </div>
   `;
+  document.querySelector("#lockScenarioButton").textContent = state.settings.locked ? "Unlock" : "Lock";
 }
 
 function renderAudit() {
-  const rows = state.audit
-    .slice()
-    .reverse()
-    .map((entry) => `
-      <tr>
-        <td>${escapeHTML(entry.id)}</td>
-        <td>${escapeHTML(entry.timestamp)}</td>
-        <td>${escapeHTML(entry.action)}</td>
-        <td>${escapeHTML(entry.target)}</td>
-        <td>${escapeHTML(entry.before)}</td>
-        <td>${escapeHTML(entry.after)}</td>
-        <td>${escapeHTML(entry.user)}</td>
-        <td>${escapeHTML(entry.note)}</td>
-      </tr>
-    `)
-    .join("");
-
+  const rows = state.audit.slice().reverse().map((entry) => `
+    <tr><td>${escapeHTML(entry.id)}</td><td>${escapeHTML(entry.timestamp)}</td><td>${escapeHTML(entry.text)}</td><td>${escapeHTML(entry.user)}</td></tr>
+  `).join("");
   els.auditContent.innerHTML = `
     <div class="panel">
-      <div class="panel-header">
-        <h3 class="panel-title">Audit events</h3>
-        <span class="mini-badge">${state.audit.length} events</span>
+      <div class="panel-header"><h3 class="panel-title">Plain-English audit trail</h3><span class="mini-badge">${state.audit.length} events</span></div>
+      <div class="panel-body"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Timestamp</th><th>Event</th><th>User</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    </div>
+  `;
+}
+
+function renderSettings(validation) {
+  const lineRows = state.lines.map((item, index) => {
+    const used = state.cards.some((cardItem) => cardItem.target.line === item.key) || Boolean(state.unitEconomics.splits[item.key]);
+    return `
+      <tr>
+        <td>${escapeHTML(item.key)}</td>
+        <td><input class="grid-input" data-line-name="${item.key}" value="${escapeAttr(item.name)}" ${state.settings.locked ? "disabled" : ""}></td>
+        <td>${selectHTML(`data-line-type="${item.key}" ${state.settings.locked ? "disabled" : ""}`, item.type, ["revenue", "cost"], (x) => x)}</td>
+        <td><input class="grid-input number-input" type="number" step="any" data-line-bound="${item.key}" value="${item.bound}" ${state.settings.locked ? "disabled" : ""}></td>
+        <td>
+          <button class="ghost-button" data-move-line="${item.key}:up" type="button" ${index === 0 || state.settings.locked ? "disabled" : ""}>Up</button>
+          <button class="ghost-button" data-move-line="${item.key}:down" type="button" ${index === state.lines.length - 1 || state.settings.locked ? "disabled" : ""}>Down</button>
+          <button class="danger-button" data-remove-line="${item.key}" type="button" ${state.settings.locked ? "disabled" : ""}>Remove</button>
+        </td>
+        <td>${used ? "Guarded" : "Clear"}</td>
+      </tr>
+    `;
+  }).join("");
+  els.settingsContent.innerHTML = `
+    <div class="grid">
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">Projection settings</h3><span class="mini-badge">${state.settings.locked ? "Locked" : "Editable"}</span></div>
+        <div class="panel-body">
+          <div class="control-grid">
+            ${settingField("Scenario", "scenarioName", "text", state.settings.scenarioName)}
+            ${settingField("Start year", "startYear", "number", state.settings.startYear)}
+            ${settingField("Annual years", "yearCount", "number", state.settings.yearCount, { min: 1, max: 10 })}
+            ${settingField("Monthly years", "monthlyYearCount", "number", state.settings.monthlyYearCount, { min: 1, max: 5 })}
+            ${settingSelect("Granularity", "granularity", state.settings.granularity, ["annual", "monthly"])}
+            ${settingSelect("Start month", "startMonth", String(state.settings.startMonth), MONTHS.map((_, index) => String(index + 1)), (x) => MONTHS[Number(x) - 1])}
+            ${settingField("Currency", "currency", "text", state.settings.currency)}
+            ${settingField("Units", "units", "text", state.settings.units)}
+            ${settingSelect("Translator backend", "translatorBackend", state.settings.translatorBackend, ["local", "live_api"])}
+            ${settingField("Global annual bound", "maxAnnualFigure", "number", state.settings.maxAnnualFigure)}
+            ${settingField("Max cost / revenue", "maxCostRatio", "number", state.settings.maxCostRatio)}
+            <label class="toggle input-like"><input class="settings-input" data-setting="includeAuditTrail" type="checkbox" ${state.settings.includeAuditTrail ? "checked" : ""} ${state.settings.locked ? "disabled" : ""}> Include audit trail</label>
+          </div>
+        </div>
       </div>
-      <div class="panel-body">
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>ID</th><th>Timestamp</th><th>Action</th><th>Target</th><th>Old value</th><th>New value</th><th>User</th><th>Notes</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">P&L lines</h3><button class="primary-button" data-add-line type="button" ${state.settings.locked ? "disabled" : ""}>Add Line</button></div>
+        <div class="panel-body">
+          <div class="table-wrap"><table><thead><tr><th>Key</th><th>Name</th><th>Type</th><th class="number">Annual bound</th><th>Order / remove</th><th>Guard</th></tr></thead><tbody>${lineRows}</tbody></table></div>
+          <p class="muted">Removing a used line parks cards that target it, matching the SDD guardrail.</p>
         </div>
       </div>
     </div>
   `;
 }
 
-function renderSources() {
-  els.sourcesContent.innerHTML = `
-    <div class="grid two-col">
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Source log</h3>
-        </div>
+function renderQuickStart() {
+  els.quickStartContent.innerHTML = `
+    <div class="help-layout">
+      <aside class="help-index panel">
+        <div class="panel-header"><h3 class="panel-title">Quick Start sections</h3></div>
         <div class="panel-body">
-          <div class="source-list">
-            ${SOURCE_LOG.map((source) => `
-              <div class="source-item">
-                <h3>${escapeHTML(source.item)}</h3>
-                <p><strong>${escapeHTML(source.source)}</strong> - ${escapeHTML(source.ref)}</p>
-                <p>${escapeHTML(source.note)}</p>
-              </div>
-            `).join("")}
+          <div class="help-nav-list">
+            ${QUICK_START_STEPS.map((item) => `<button class="ghost-button help-nav-link" data-help-jump="quickStart:${item.view}" type="button">${escapeHTML(item.title)}</button>`).join("")}
           </div>
         </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
-          <h3 class="panel-title">Digital guarantee driver notes</h3>
+      </aside>
+      <div class="help-document">
+        <div class="panel help-intro">
+          <div class="panel-header">
+            <h3 class="panel-title">Quick Start Guide</h3>
+            <span class="mini-badge">${escapeHTML(VIEW_LABELS[activeContextView()] || "Dashboard")} context</span>
+          </div>
+          <div class="panel-body">
+            <p>This guide is the shortest path from a blank review session to a saved and exportable financial model. Use the top bar Quick Start button from any screen to jump straight to the step that matches where you are working.</p>
+            <div class="button-row">
+              <button class="secondary-button" data-help="guide" type="button">Open Full User Guide</button>
+              <button class="primary-button" data-print-guide="quickStart" type="button">Download PDF</button>
+            </div>
+          </div>
         </div>
+        <div class="quick-step-grid">
+          ${QUICK_START_STEPS.map(quickStepHTML).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderGuide() {
+  els.guideContent.innerHTML = `
+    <div class="help-layout">
+      <aside class="help-index panel">
+        <div class="panel-header"><h3 class="panel-title">Guide index</h3></div>
         <div class="panel-body">
-          <table>
-            <tbody>
-              <tr><td>Guarantee fee rate</td><td class="number">2.5%</td></tr>
-              <tr><td>Distribution fee</td><td class="number">10.0% of guarantee fee</td></tr>
-              <tr><td>Processing fee</td><td class="number">20.0% of guarantee fee</td></tr>
-              <tr><td>Per project charge</td><td class="number">RM1.1088m</td></tr>
-              <tr><td>Default projects</td><td class="number">3 per year</td></tr>
-              <tr><td>Digital guarantee driver</td><td>Retained inactive to avoid conflict with the S2b PDF line item.</td></tr>
-            </tbody>
-          </table>
+          <div class="help-nav-list">
+            ${GUIDE_SECTIONS.map((item) => `<button class="ghost-button help-nav-link" data-help-jump="guide:${item.view}" type="button">${escapeHTML(item.title)}</button>`).join("")}
+          </div>
+        </div>
+      </aside>
+      <div class="help-document">
+        <div class="panel help-intro">
+          <div class="panel-header">
+            <h3 class="panel-title">User Guide</h3>
+            <span class="mini-badge">${escapeHTML(VIEW_LABELS[activeContextView()] || "Dashboard")} context</span>
+          </div>
+          <div class="panel-body">
+            <p>This guide explains every working screen in the SDD v2 model. Use the top bar User Guide button from any screen to land directly on the relevant section, then use the index to move across the rest of the documentation.</p>
+            <div class="button-row">
+              <button class="secondary-button" data-help="quickStart" type="button">Open Quick Start</button>
+              <button class="primary-button" data-print-guide="guide" type="button">Download PDF</button>
+            </div>
+          </div>
+        </div>
+        ${GUIDE_SECTIONS.map(guideSectionHTML).join("")}
+        <div class="panel help-section" id="guide-sources">
+          <div class="panel-header"><h3 class="panel-title">Sources and implementation notes</h3></div>
+          <div class="panel-body">
+            <div class="source-list">
+              ${SOURCE_LOG.map((item) => `<div class="source-item"><h3>${escapeHTML(item.item)}</h3><p><strong>${escapeHTML(item.source)}</strong></p><p>${escapeHTML(item.note)}</p></div>`).join("")}
+            </div>
+            <table class="guide-note-table">
+              <tbody>
+                <tr><td>AI arithmetic</td><td>Not allowed. Translator only emits formula cards; the deterministic engine calculates.</td></tr>
+                <tr><td>Live AI backend</td><td>Interface and setting exist. Static GitHub Pages cannot host /api/translate.</td></tr>
+                <tr><td>Cross-referencing</td><td>depends_on exists as a field; complex cross-card dependency solving remains future scope.</td></tr>
+                <tr><td>Data storage</td><td>Browser local storage for this zero-cost single-user MVP.</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -761,706 +1000,633 @@ function renderSources() {
 
 function calculateModel() {
   const years = getYears();
-  const lineValues = {};
-  const metricValues = {};
-  const outputs = {};
+  const periods = getPeriods();
+  const drivers = {};
+  for (const item of state.drivers) drivers[item.key] = driverSeries(item, years);
 
-  [...LINE_ITEMS.map((item) => item.name), ...FINANCIAL_METRICS].forEach((line) => {
-    lineValues[line] = blankSeries(years);
-    metricValues[line] = blankSeries(years);
-  });
-
-  const activeAssumptions = state.assumptions.filter((item) => item.active);
-  const firstPass = activeAssumptions.filter((item) => !["percentRevenue", "percentLine"].includes(item.method));
-  const secondPass = activeAssumptions.filter((item) => ["percentRevenue", "percentLine"].includes(item.method));
-
-  for (const item of firstPass) {
-    outputs[item.id] = calculateAssumptionValues(item, years, { lineValues }, { preview: false });
-    addValues(item.targetLine, outputs[item.id], years, lineValues, metricValues);
+  const cardAnnual = {};
+  const annualLines = {};
+  const periodLines = {};
+  for (const item of state.lines) {
+    annualLines[item.key] = blankYearSeries(years);
+    periodLines[item.key] = blankPeriodSeries(periods);
   }
 
-  const baseCalc = { lineValues };
-  for (const item of secondPass) {
-    outputs[item.id] = calculateAssumptionValues(item, years, baseCalc, { preview: false });
-    addValues(item.targetLine, outputs[item.id], years, lineValues, metricValues);
-  }
-
-  const derived = {
-    operatingRevenue: blankSeries(years),
-    totalIncome: blankSeries(years),
-    totalExpenses: blankSeries(years),
-    ebitda: blankSeries(years),
-    pbt: blankSeries(years),
-    tax: blankSeries(years),
-    pat: blankSeries(years),
-    totalFunding: blankSeries(years),
-  };
-
-  for (const year of years) {
-    const revenue = sumLines(["Distribution fee", "Referral fee", "Cr. Guarantee Processing fee", "Development Fee", "Service fee for PD model", "Recurring imSME service fee", "Digital guarantee"], year, lineValues);
-    const investment = lineValues["Investment income"][year] || 0;
-    const operatingExpenses = lineValues["Operating Expenses"][year] || 0;
-    const ecl = lineValues["Expected credit loss"][year] || 0;
-    const financing = lineValues["Financing cost"][year] || 0;
-    const pbt = revenue + investment + operatingExpenses + ecl + financing;
-    const tax = pbt > 0 ? -pbt * Number(state.controls.taxRate || 0) : 0;
-
-    derived.operatingRevenue[year] = revenue;
-    derived.totalIncome[year] = revenue + investment;
-    derived.totalExpenses[year] = operatingExpenses + ecl;
-    derived.ebitda[year] = revenue + operatingExpenses;
-    derived.pbt[year] = pbt;
-    derived.tax[year] = tax;
-    derived.pat[year] = pbt + tax;
-    derived.totalFunding[year] = (metricValues["Funding from CGC Malaysia"]?.[year] || 0) + (metricValues["Funding from SPRA"]?.[year] || 0);
-  }
-
-  return { years, lineValues, metricValues, derived, outputs };
-}
-
-function calculateAssumptionValues(item, years, calc = {}, options = {}) {
-  const output = blankSeries(years);
-  if (!options.preview && !item.active) return output;
-
-  years.forEach((year, index) => {
-    const withinRange = year >= Number(item.startYear || years[0]) && year <= Number(item.endYear || years.at(-1));
-    if (!withinRange && !["yearSpecific", "oneOff"].includes(item.method)) {
-      output[year] = 0;
-      return;
-    }
-
-    if (item.method === "yearSpecific") {
-      output[year] = Number(item.values?.[year] || 0);
-    } else if (item.method === "fixed") {
-      output[year] = Number(item.amount || 0);
-    } else if (item.method === "compound") {
-      const startIndex = Math.max(0, year - Number(item.startYear || years[0]));
-      output[year] = Number(item.amount || 0) * Math.pow(1 + Number(item.growthRate || 0), startIndex);
-    } else if (item.method === "straightLine") {
-      const startYear = Number(item.startYear || years[0]);
-      const endYear = Number(item.endYear || years.at(-1));
-      const span = Math.max(1, endYear - startYear);
-      const progress = Math.max(0, Math.min(1, (year - startYear) / span));
-      output[year] = Number(item.amount || 0) + (Number(item.endValue || 0) - Number(item.amount || 0)) * progress;
-    } else if (item.method === "percentRevenue") {
-      output[year] = (calc.derived?.operatingRevenue?.[year] || operatingRevenueFromLines(calc.lineValues, year)) * Number(item.rate || 0);
-    } else if (item.method === "percentLine") {
-      output[year] = (calc.lineValues?.[item.sourceLine]?.[year] || 0) * Number(item.rate || 0);
-    } else if (item.method === "volumePrice") {
-      output[year] = Number(item.volume || 0) * Number(item.price || 0);
-    } else if (item.method === "oneOff") {
-      output[year] = year === Number(item.oneOffYear || years[index]) ? Number(item.amount || 0) : 0;
-    }
-  });
-  return output;
-}
-
-function validateModel(calc) {
-  const years = getYears();
-  const assumptionChecks = state.assumptions.map((item) => validateAssumption(item, years, calc));
-  const warnings = assumptionChecks.filter((item) => item.status === "Warning").length;
-  const incomplete = assumptionChecks.filter((item) => item.status === "Incomplete").length;
-  const pbtCumulative = years.reduce((sum, year) => sum + calc.derived.pbt[year], 0);
-  const lastYear = years.at(-1);
-  const revenueMultiple = safeDivide(calc.derived.operatingRevenue[lastYear], calc.derived.operatingRevenue[years[0]]);
-  const minEbitdaMargin = Math.min(...years.map((year) => safeDivide(calc.derived.ebitda[year], calc.derived.operatingRevenue[year])));
-  const conflictCount = findConflicts(years).length;
-
-  const checks = [
-    {
-      check: "Required assumptions complete",
-      delta: incomplete,
-      status: incomplete ? "FAIL" : "OK",
-      where: "Assumption Register",
-      notes: incomplete ? "At least one active assumption is missing a value or line item." : "All active assumptions have interpretable drivers.",
-    },
-    {
-      check: "Reasonability warnings",
-      delta: warnings,
-      status: warnings ? "WARN" : "OK",
-      where: "Validation Centre",
-      notes: warnings ? "One or more assumptions breach configured growth or conflict thresholds." : "All active assumptions are within configured thresholds.",
-    },
-    {
-      check: "Active assumption conflicts",
-      delta: conflictCount,
-      status: conflictCount ? "WARN" : "OK",
-      where: "Assumption Register",
-      notes: conflictCount ? "Multiple active assumptions affect the same line and year." : "No overlapping active line-item assumptions found.",
-    },
-    {
-      check: "Maximum Year 5 / Year 1 revenue multiple",
-      delta: revenueMultiple - Number(state.controls.maxYear5RevenueMultiple || 0),
-      status: revenueMultiple > Number(state.controls.maxYear5RevenueMultiple || 0) ? "WARN" : "OK",
-      where: "Control Panel",
-      notes: `Current multiple is ${formatNumber(revenueMultiple, 1)}x.`,
-    },
-    {
-      check: "Minimum EBITDA margin",
-      delta: minEbitdaMargin - Number(state.controls.minEbitdaMargin || 0),
-      status: minEbitdaMargin < Number(state.controls.minEbitdaMargin || 0) ? "WARN" : "OK",
-      where: "Control Panel",
-      notes: `Lowest EBITDA margin is ${percent(minEbitdaMargin)}.`,
-    },
-    {
-      check: "Maximum cumulative five-year loss",
-      delta: pbtCumulative < 0 ? Math.abs(pbtCumulative) - Number(state.controls.maxCumulativeLoss || 0) : 0,
-      status: pbtCumulative < -Number(state.controls.maxCumulativeLoss || 0) ? "FAIL" : "OK",
-      where: "Control Panel",
-      notes: `Cumulative PBT is ${money(pbtCumulative)}.`,
-    },
-  ];
-
-  return { assumptions: assumptionChecks, checks };
-}
-
-function validateAssumption(item, years, calc) {
-  if (!item.active) {
-    return { id: item.id, title: item.title, status: "Inactive", className: "warn", reason: "Assumption retained but not affecting the P&L.", fix: "Toggle active if this assumption should flow into the model." };
-  }
-  if (!item.targetLine || !item.method) {
-    return { id: item.id, title: item.title, status: "Incomplete", className: "fail", reason: "Missing target line or method.", fix: "Edit mapping and method." };
-  }
-
-  const values = calculateAssumptionValues(item, years, calc, { preview: true });
-  const nonZero = years.some((year) => Math.abs(values[year] || 0) > 0.0001);
-  if (!nonZero && !["Financing cost", "Tax"].includes(item.targetLine)) {
-    return { id: item.id, title: item.title, status: "Incomplete", className: "fail", reason: "Generated output is zero across all years.", fix: "Add values or deactivate if this is reference-only." };
-  }
-
-  const conflicts = findConflicts(years).filter((conflict) => conflict.ids.includes(item.id));
-  if (conflicts.length) {
-    return { id: item.id, title: item.title, status: "Warning", className: "warn", reason: "Active assumption overlaps another assumption on the same line and year.", fix: "Choose override/add/multiply logic or deactivate one assumption." };
-  }
-
-  const materiality = years.reduce((sum, year) => sum + Math.abs(values[year] || 0), 0);
-  if (materiality < Number(state.controls.materialityThreshold || 0) && !FINANCIAL_METRICS.includes(item.targetLine)) {
-    return { id: item.id, title: item.title, status: "Warning", className: "warn", reason: "Below configured materiality threshold.", fix: "Retain if strategically important; otherwise archive or deactivate." };
-  }
-
-  for (let i = 1; i < years.length; i += 1) {
-    const prev = values[years[i - 1]];
-    const curr = values[years[i]];
-    if (!prev || Math.abs(prev) < 0.0001) continue;
-    const growth = (Math.abs(curr) - Math.abs(prev)) / Math.abs(prev);
-    const isCost = curr < 0 || item.category.includes("cost") || item.category.includes("expenditure") || item.category.includes("risk");
-    const maxGrowth = isCost ? Number(state.controls.maxCostGrowth || 0) : Number(state.controls.maxRevenueGrowth || 0);
-    if (growth > maxGrowth) {
-      return {
-        id: item.id,
-        title: item.title,
-        status: "Warning",
-        className: "warn",
-        reason: `Year-on-year growth of ${percent(growth)} exceeds ${percent(maxGrowth)} threshold.`,
-        fix: "Review source, adjust threshold, or add a scenario note.",
-      };
-    }
-  }
-
-  return { id: item.id, title: item.title, status: "Implemented", className: "pass", reason: "Parsed, active, and within core thresholds.", fix: "No action required." };
-}
-
-function findConflicts(years) {
-  const conflicts = [];
-  for (const line of LINE_ITEMS.map((item) => item.name)) {
+  for (const item of state.cards) {
+    const annual = cardAnnualValues(item, years, drivers);
+    cardAnnual[item.id] = annual;
+    if (!item.enabled || !lineByKey(item.target.line)) continue;
     for (const year of years) {
-      const ids = state.assumptions
-        .filter((item) => item.active && item.targetLine === line)
-        .filter((item) => Math.abs(calculateAssumptionValues(item, [year], {}, { preview: true })[year] || 0) > 0.0001)
-        .map((item) => item.id);
-      if (ids.length > 1) conflicts.push({ line, year, ids });
+      annualLines[item.target.line][year] += annual[year] || 0;
     }
   }
-  return conflicts;
-}
 
-function controlPanel() {
-  return `
-    <div class="control-grid">
-      ${field("Scenario", "scenarioName", "text", state.controls.scenarioName)}
-      ${field("Start year", "startYear", "number", state.controls.startYear)}
-      ${field("Projection years", "duration", "number", state.controls.duration, { min: 3, max: 7 })}
-      ${selectField("Output style", "outputStyle", state.controls.outputStyle, ["Working-model style", "Management-report style", "Board-paper style"])}
-      ${field("Currency", "currency", "text", state.controls.currency)}
-      ${field("Units", "units", "text", state.controls.units)}
-      ${field("Max revenue growth", "maxRevenueGrowth", "percent", state.controls.maxRevenueGrowth)}
-      ${field("Max cost growth", "maxCostGrowth", "percent", state.controls.maxCostGrowth)}
-      ${field("Max Year 5 / Year 1 revenue multiple", "maxYear5RevenueMultiple", "number", state.controls.maxYear5RevenueMultiple)}
-      ${field("Minimum EBITDA margin", "minEbitdaMargin", "percent", state.controls.minEbitdaMargin)}
-      ${field("Maximum cumulative loss", "maxCumulativeLoss", "number", state.controls.maxCumulativeLoss)}
-      ${field("Tax rate", "taxRate", "percent", state.controls.taxRate)}
-      <label class="toggle input-like" style="padding:8px;border-radius:6px;border:1px solid var(--line-strong)">
-        <input type="checkbox" class="control-input" data-control="approvalRequired" ${state.controls.approvalRequired ? "checked" : ""} ${state.controls.locked ? "disabled" : ""}>
-        Approval required
-      </label>
-      <label class="toggle input-like" style="padding:8px;border-radius:6px;border:1px solid var(--line-strong)">
-        <input type="checkbox" class="control-input" data-control="includeAuditTrail" ${state.controls.includeAuditTrail ? "checked" : ""} ${state.controls.locked ? "disabled" : ""}>
-        Include audit trail
-      </label>
-    </div>
-  `;
-}
-
-function field(label, key, type, value, opts = {}) {
-  const inputType = type === "percent" ? "number" : type;
-  const shown = type === "percent" ? Number(value || 0) * 100 : value;
-  return `
-    <div class="form-field">
-      <label for="control-${key}">${escapeHTML(label)}</label>
-      <input id="control-${key}" class="control-input input-cell" data-control="${key}" data-type="${type}" type="${inputType}" value="${escapeAttr(shown)}" ${opts.min !== undefined ? `min="${opts.min}"` : ""} ${opts.max !== undefined ? `max="${opts.max}"` : ""} ${state.controls.locked ? "disabled" : ""}>
-    </div>
-  `;
-}
-
-function selectField(label, key, value, options) {
-  return `
-    <div class="form-field">
-      <label for="control-${key}">${escapeHTML(label)}</label>
-      <select id="control-${key}" class="control-input input-cell" data-control="${key}" ${state.controls.locked ? "disabled" : ""}>
-        ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHTML(option)}</option>`).join("")}
-      </select>
-    </div>
-  `;
-}
-
-function plTable(calc, compact) {
-  const years = getYears();
-  const row = (label, series, className = "", logic = "") => `
-    <tr class="${className}">
-      <td>${escapeHTML(label)}${logic && !compact ? `<br><span class="muted">${escapeHTML(logic)}</span>` : ""}</td>
-      ${years.map((year) => `<td class="number ${series[year] < 0 ? "negative" : ""}">${money(series[year])}</td>`).join("")}
-    </tr>
-  `;
-  const sections = [];
-  sections.push(`<tr class="section-row"><td colspan="${years.length + 1}">Operating revenue</td></tr>`);
-  for (const item of LINE_ITEMS.filter((line) => line.group === "Revenue")) {
-    sections.push(row(item.name, calc.lineValues[item.name], "", `SUM active assumptions mapped to ${item.name}`));
+  for (const lineItem of state.lines) {
+    for (const period of periods) {
+      const amount = annualLines[lineItem.key]?.[period.year] || 0;
+      periodLines[lineItem.key][period.key] = state.settings.granularity === "monthly" ? amount / 12 : amount;
+    }
   }
-  sections.push(row("Total Operating Revenue", calc.derived.operatingRevenue, "total-row", "Sum of revenue lines"));
-  sections.push(row("(+) Investment income", calc.lineValues["Investment income"], "", "Active assumptions mapped to Investment income"));
-  sections.push(row("Total Income", calc.derived.totalIncome, "total-row", "Total Operating Revenue + Investment income"));
-  sections.push(`<tr class="section-row"><td colspan="${years.length + 1}">Expenses</td></tr>`);
-  sections.push(row("(-) Operating Expenses", calc.lineValues["Operating Expenses"], "", "Active assumptions mapped to Operating Expenses"));
-  sections.push(row("(-) Expected credit loss", calc.lineValues["Expected credit loss"], "", "Active assumptions mapped to ECL"));
-  sections.push(row("Total Expenses", calc.derived.totalExpenses, "total-row", "Operating Expenses + Expected credit loss"));
-  sections.push(row("Financing cost", calc.lineValues["Financing cost"], "", "No interest expense in S2b reference case"));
-  sections.push(row("Profit (Loss) before taxation", calc.derived.pbt, "total-row", "Total Income + Total Expenses + Financing cost"));
-  if (!compact) {
-    sections.push(row("Tax", calc.derived.tax, "", "Positive PBT x tax rate; default 0% because reference table has no tax line"));
-    sections.push(row("Profit (Loss) after tax", calc.derived.pat, "total-row", "PBT + Tax"));
-  }
-  return `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Line item</th>${years.map((year) => `<th class="number">${year}</th>`).join("")}</tr></thead>
-        <tbody>${sections.join("")}</tbody>
-      </table>
-    </div>
-  `;
+
+  const annual = aggregateAnnual(annualLines, years);
+  const period = aggregatePeriods(periodLines, periods);
+  return { years, periods, drivers, cardAnnual, annual: { lines: signedLineMap(annualLines), rawLines: annualLines, ...annual }, period: { lines: signedPeriodLineMap(periodLines), rawLines: periodLines, ...period } };
 }
 
-function financialStrengthTable(calc) {
+function cardAnnualValues(item, years, drivers) {
+  const out = blankYearSeries(years);
+  if (!item.enabled) return out;
+  for (const year of years) {
+    if (!targetCoversYear(item.target.years, year)) continue;
+    if (item.method === "flat_values") {
+      out[year] = Number(item.params.values?.[year] || 0);
+    } else if (item.method === "single_value_growth") {
+      const baseYear = Number(item.params.baseYear || years[0]);
+      if (year < baseYear) out[year] = 0;
+      else out[year] = Number(item.params.startValue || 0) * Math.pow(1 + Number(item.params.growthRate || 0), year - baseYear);
+    } else if (item.method === "percent_of_driver") {
+      out[year] = (drivers[item.params.driver]?.[year] || 0) * Number(item.params.rate || 0);
+    } else if (item.method === "per_unit") {
+      out[year] = (drivers[item.params.driver]?.[year] || 0) * Number(item.params.unitRate || 0);
+    } else if (item.method === "fixed_per_year") {
+      out[year] = Number(item.params.amount || 0);
+    }
+  }
+  return out;
+}
+
+function validateModel(model) {
   const years = getYears();
-  const rows = [
-    ["Funding from CGC Malaysia", calc.metricValues["Funding from CGC Malaysia"]],
-    ["Funding from SPRA", calc.metricValues["Funding from SPRA"]],
-    ["Total Funding", calc.derived.totalFunding],
-    ["Guarantee Cover", calc.metricValues["Guarantee Cover"]],
-    ["Net Reserved", calc.metricValues["Net Reserved"]],
-    ["GRR", calc.metricValues["GRR"]],
+  const cards = state.cards.map((item) => validateCard(item, years, model));
+  const splits = state.lines.map((item) => validateSplit(item.key));
+  const checks = [
+    check("Formula card translation", cards.filter((item) => item.status === "needs_rewrite").length, "Assumptions", "Cards must translate into a valid method and params."),
+    check("Reasonability review", cards.filter((item) => item.status === "needs_review").length, "Assumptions", "Cards breach annual line/global bounds."),
+    check("Unit split review", splits.filter((item) => item.status === "needs_review").length, "Unit Econ Assumptions", "Percentage splits must sum to 100%; by-line cycles are blocked."),
   ];
+  return { cards, splits, checks };
+}
+
+function validateCard(item, years, model) {
+  if (!item.enabled) return { id: item.id, status: "ok", className: "pass", hint: "Disabled; retained for scenario audit." };
+  if (!METHOD_KEYS.includes(item.method)) return { id: item.id, status: "needs_rewrite", className: "fail", hint: "Unknown method." };
+  if (!lineByKey(item.target.line)) return { id: item.id, status: "needs_rewrite", className: "fail", hint: "Target P&L line is parked or missing." };
+  if (["percent_of_driver", "per_unit"].includes(item.method) && !driverByKey(item.params.driver)) return { id: item.id, status: "needs_rewrite", className: "fail", hint: "Driver is missing." };
+  if (item.method === "flat_values" && !item.params.values) return { id: item.id, status: "needs_rewrite", className: "fail", hint: "Flat values are missing." };
+
+  const lineItem = lineByKey(item.target.line);
+  const annual = model.cardAnnual[item.id] || blankYearSeries(years);
+  const maxAbs = Math.max(...years.map((year) => Math.abs(annual[year] || 0)));
+  const bound = Number(lineItem.bound || state.settings.maxAnnualFigure);
+  if (maxAbs > bound || maxAbs > Number(state.settings.maxAnnualFigure || bound)) {
+    return { id: item.id, status: "needs_review", className: "warn", hint: `Annual amount ${money(maxAbs)} breaches configured bound.` };
+  }
+  return { id: item.id, status: "ok", className: "pass", hint: "Translated and within configured bounds." };
+}
+
+function validateSplit(lineKey) {
+  const split = splitFor(lineKey);
+  if (split.method === "percentages") {
+    const total = state.unitEconomics.segments.reduce((sum, segment) => sum + Number(split.values?.[segment.key] || 0), 0);
+    if (Math.abs(total - 100) > 0.01) return { lineKey, status: "needs_review", className: "warn", hint: `Percentages sum to ${round(total, 1)}%, normalized for reconciliation.` };
+  }
+  if (split.method === "by_line" && createsSplitCycle(lineKey, split.byLine)) {
+    return { lineKey, status: "needs_review", className: "fail", hint: "Split by-line cycle detected; using even split." };
+  }
+  return { lineKey, status: "ok", className: "pass", hint: "Split normalizes to 100%." };
+}
+
+function calculateUnitEconomics(model) {
+  const years = getYears();
+  const lineSegment = {};
+  const segmentTotal = {};
+  const totalByYear = blankYearSeries(years);
+  for (const segment of state.unitEconomics.segments) segmentTotal[segment.key] = blankYearSeries(years);
+
+  for (const lineItem of state.lines) {
+    const weights = normalizedSplit(lineItem.key, new Set());
+    lineSegment[lineItem.key] = {};
+    for (const segment of state.unitEconomics.segments) lineSegment[lineItem.key][segment.key] = blankYearSeries(years);
+    for (const year of years) {
+      const lineValue = model.annual.lines[lineItem.key]?.[year] || 0;
+      for (const segment of state.unitEconomics.segments) {
+        const allocated = lineValue * (weights[segment.key] || 0);
+        lineSegment[lineItem.key][segment.key][year] = allocated;
+        segmentTotal[segment.key][year] += allocated;
+      }
+      totalByYear[year] += lineValue;
+    }
+  }
+  return { lineSegment, segmentTotal, totalByYear };
+}
+
+function normalizedSplit(lineKey, seen) {
+  const segments = state.unitEconomics.segments;
+  const split = splitFor(lineKey);
+  if (!segments.length) return {};
+  if (split.method === "by_line" && split.byLine && !seen.has(lineKey) && !createsSplitCycle(lineKey, split.byLine)) {
+    seen.add(lineKey);
+    return normalizedSplit(split.byLine, seen);
+  }
+  if (split.method === "even" || split.method === "by_line") {
+    return Object.fromEntries(segments.map((segment) => [segment.key, 1 / segments.length]));
+  }
+  const raw = {};
+  for (const segment of segments) raw[segment.key] = Number(split.values?.[segment.key] || 0);
+  const total = Object.values(raw).reduce((sum, value) => sum + Math.max(0, value), 0);
+  if (!total) return Object.fromEntries(segments.map((segment) => [segment.key, 1 / segments.length]));
+  return Object.fromEntries(segments.map((segment) => [segment.key, Math.max(0, raw[segment.key] || 0) / total]));
+}
+
+function driverSeries(item, years) {
+  const out = blankYearSeries(years);
+  for (const year of years) out[year] = Number(item.baseValue || 0) * Math.pow(1 + Number(item.growthRate || 0), year - years[0]);
+  return out;
+}
+
+function aggregateAnnual(rawLines, years) {
+  const revenue = blankYearSeries(years);
+  const cost = blankYearSeries(years);
+  const total = blankYearSeries(years);
+  for (const year of years) {
+    for (const lineItem of state.lines) {
+      const value = rawLines[lineItem.key]?.[year] || 0;
+      if (lineItem.type === "revenue") revenue[year] += value;
+      else cost[year] += value;
+    }
+    total[year] = revenue[year] - cost[year];
+  }
+  return { revenue, cost, total };
+}
+
+function aggregatePeriods(rawLines, periods) {
+  const revenue = blankPeriodSeries(periods);
+  const cost = blankPeriodSeries(periods);
+  const total = blankPeriodSeries(periods);
+  for (const period of periods) {
+    for (const lineItem of state.lines) {
+      const value = rawLines[lineItem.key]?.[period.key] || 0;
+      if (lineItem.type === "revenue") revenue[period.key] += value;
+      else cost[period.key] += value;
+    }
+    total[period.key] = revenue[period.key] - cost[period.key];
+  }
+  return { revenue, cost, total };
+}
+
+function signedLineMap(rawLines) {
+  const out = {};
+  for (const lineItem of state.lines) {
+    out[lineItem.key] = {};
+    for (const [year, value] of Object.entries(rawLines[lineItem.key] || {})) out[lineItem.key][year] = lineItem.type === "cost" ? -value : value;
+  }
+  return out;
+}
+
+function signedPeriodLineMap(rawLines) {
+  const out = {};
+  for (const lineItem of state.lines) {
+    out[lineItem.key] = {};
+    for (const [period, value] of Object.entries(rawLines[lineItem.key] || {})) out[lineItem.key][period] = lineItem.type === "cost" ? -value : value;
+  }
+  return out;
+}
+
+function plTable(model, periods) {
+  const isMonthly = state.settings.granularity === "monthly";
+  const rows = [];
+  rows.push(`<tr class="section-row"><td class="sticky-col" colspan="${periods.length + 1}">Revenue</td></tr>`);
+  for (const item of state.lines.filter((lineItem) => lineItem.type === "revenue")) rows.push(plLineRow(item, model, periods, isMonthly));
+  rows.push(totalRow("Total Revenue", isMonthly ? model.period.revenue : model.annual.revenue, periods));
+  rows.push(`<tr class="section-row"><td class="sticky-col" colspan="${periods.length + 1}">Costs</td></tr>`);
+  for (const item of state.lines.filter((lineItem) => lineItem.type === "cost")) rows.push(plLineRow(item, model, periods, isMonthly));
+  rows.push(totalRow("Total Costs", negateSeries(isMonthly ? model.period.cost : model.annual.cost), periods));
+  rows.push(totalRow("Profit / (Loss)", isMonthly ? model.period.total : model.annual.total, periods));
   return `
     <div class="table-wrap">
-      <table>
-        <thead><tr><th>Metric</th>${years.map((year) => `<th class="number">${year}</th>`).join("")}</tr></thead>
-        <tbody>
-          ${rows.map(([label, series]) => `
-            <tr class="${label === "Total Funding" ? "total-row" : ""}">
-              <td>${escapeHTML(label)}</td>
-              ${years.map((year) => `<td class="number">${label === "GRR" ? formatNumber(series[year], 1) + "x" : money(series[year])}</td>`).join("")}
-            </tr>
-          `).join("")}
-        </tbody>
+      <table class="wide-table">
+        <thead><tr><th class="sticky-col">Line item</th>${periods.map((period) => `<th class="number">${escapeHTML(period.label)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.join("")}</tbody>
       </table>
     </div>
   `;
 }
 
-function libraryTable() {
-  return `
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>ID</th><th>Category</th><th>Template</th><th>Method</th></tr></thead>
-        <tbody>
-          ${TEMPLATE_LIBRARY.map((template) => `
-            <tr><td>${template[0]}</td><td>${template[1]}</td><td>${escapeHTML(template[2])}</td><td>${escapeHTML(METHOD_LABELS[template[3]])}</td></tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
+function plLineRow(item, model, periods, isMonthly) {
+  const series = isMonthly ? model.period.lines[item.key] : model.annual.lines[item.key];
+  return `<tr><td class="sticky-col">${escapeHTML(item.name)}</td>${periods.map((period) => valueCell(series?.[period.key] ?? series?.[period.year] ?? 0)).join("")}</tr>`;
+}
+
+function totalRow(label, series, periods) {
+  return `<tr class="total-row"><td class="sticky-col">${escapeHTML(label)}</td>${periods.map((period) => valueCell(series?.[period.key] ?? series?.[period.year] ?? 0)).join("")}</tr>`;
 }
 
 function openEditor(id) {
   const years = getYears();
-  const found = id ? state.assumptions.find((item) => item.id === id) : null;
-  editorDraft = found ? clone(found) : assumption(nextAssumptionId(), "1. Revenue assumptions", "New assumption", "Distribution fee", "yearSpecific", true, {
-    text: "Revenue starts at RM1 million in Year 1 and grows by 5% annually.",
-    values: Object.fromEntries(years.map((year) => [year, 0])),
-    source: "User-entered",
-  });
+  editorDraft = id ? clone(state.cards.find((item) => item.id === id)) : card(nextCardId(), "Revenue Drivers", "Guarantee fee is 2.5% of programme size.", state.lines[0]?.key || "", "percent_of_driver", { driver: state.drivers[0]?.key || "", rate: 0.025 }, { years: "all" });
+  if (!editorDraft.params.values) editorDraft.params.values = Object.fromEntries(years.map((year) => [year, 0]));
   renderEditor();
   els.editorPanel.classList.add("open");
 }
 
 function renderEditor() {
   const years = getYears();
-  els.editorTitle.textContent = state.assumptions.some((item) => item.id === editorDraft.id) ? "Edit assumption" : "New assumption";
-  const method = editorDraft.method;
+  const targetYears = targetYearsToArray(editorDraft.target.years, years);
+  els.editorTitle.textContent = state.cards.some((item) => item.id === editorDraft.id) ? "Edit formula card" : "New formula card";
   els.assumptionForm.innerHTML = `
     <div class="form-field">
-      <label for="assumptionText">Plain-language assumption</label>
-      <textarea id="assumptionText" name="text" class="input-cell">${escapeHTML(editorDraft.text || "")}</textarea>
+      <label>Source text</label>
+      <textarea class="input-cell" name="source_text">${escapeHTML(editorDraft.source_text || "")}</textarea>
     </div>
     <div class="button-row">
-      <button class="secondary-button" id="parseAssumptionButton" type="button">Interpret Text</button>
-      <span class="mini-badge">Confidence ${percent(editorDraft.confidence || 0)}</span>
+      <button class="secondary-button" id="parseAssumptionButton" type="button">Translator.translate()</button>
+      <span class="mini-badge">Backend: ${escapeHTML(state.settings.translatorBackend)}</span>
     </div>
     <div class="control-grid">
-      ${editorText("Title", "title", editorDraft.title)}
-      ${editorSelect("Category", "category", editorDraft.category, ASSUMPTION_CATEGORIES)}
-      ${editorSelect("Target line", "targetLine", editorDraft.targetLine, [...LINE_ITEMS.map((item) => item.name), ...FINANCIAL_METRICS])}
-      ${editorSelect("Method", "method", editorDraft.method, Object.keys(METHOD_LABELS), METHOD_LABELS)}
-      ${editorNumber("Start year", "startYear", editorDraft.startYear)}
-      ${editorNumber("End year", "endYear", editorDraft.endYear)}
-      ${editorSelect("Combination logic", "combinationLogic", editorDraft.combinationLogic, ["Add", "Override", "Subtract", "Multiply", "Minimum", "Maximum", "Inactive due to conflict"])}
-      <label class="toggle input-like" style="padding:8px;border-radius:6px;border:1px solid var(--line-strong)">
-        <input type="checkbox" name="active" ${editorDraft.active ? "checked" : ""}>
-        Active
-      </label>
+      ${editorSelect("Category", "category", editorDraft.category, TAXONOMY)}
+      ${editorSelect("Target line", "line", editorDraft.target.line, state.lines.map((item) => item.key), lineName)}
+      ${editorSelect("Method", "method", editorDraft.method, METHOD_KEYS, (key) => METHOD_LABELS[key])}
+      <label class="toggle input-like"><input name="enabled" type="checkbox" ${editorDraft.enabled ? "checked" : ""}> Enabled</label>
     </div>
-    ${methodFields(method, years)}
     <div class="form-field">
-      <label for="source">Source / audit note</label>
-      <input id="source" name="source" class="input-cell" value="${escapeAttr(editorDraft.source || "")}">
+      <label>Target years</label>
+      <div class="year-chip-row">
+        <label class="year-chip"><input name="year-all" type="checkbox" ${editorDraft.target.years === "all" ? "checked" : ""}> All</label>
+        ${years.map((year) => `<label class="year-chip"><input name="year-${year}" type="checkbox" ${targetYears.includes(year) ? "checked" : ""}> ${year}</label>`).join("")}
+      </div>
     </div>
+    ${methodEditor(editorDraft, years)}
     <div class="button-row">
-      <button class="primary-button" type="submit" ${state.controls.locked ? "disabled" : ""}>Save Assumption</button>
-      <button class="danger-button" data-delete-assumption="${editorDraft.id}" type="button" ${state.controls.locked || !state.assumptions.some((item) => item.id === editorDraft.id) ? "disabled" : ""}>Delete</button>
+      <button class="primary-button" type="submit" ${state.settings.locked ? "disabled" : ""}>Save Card</button>
+      <button class="danger-button" data-delete-card="${editorDraft.id}" type="button" ${state.settings.locked || !state.cards.some((item) => item.id === editorDraft.id) ? "disabled" : ""}>Delete</button>
     </div>
   `;
-  document.querySelector("#parseAssumptionButton").addEventListener("click", parseEditorText);
+  document.querySelector("#parseAssumptionButton").addEventListener("click", interpretEditorText);
   els.assumptionForm.querySelector("[name='method']").addEventListener("change", (event) => {
     editorDraft.method = event.target.value;
+    editorDraft.params = defaultParamsForMethod(editorDraft.method, years);
     renderEditor();
   });
 }
 
-function methodFields(method, years) {
-  if (method === "yearSpecific") {
-    return `
-      <div class="year-grid">
-        ${years.map((year) => editorNumber(String(year), `value-${year}`, editorDraft.values?.[year] || 0)).join("")}
-      </div>
-    `;
+function methodEditor(item, years) {
+  if (item.method === "flat_values") {
+    return `<div class="year-grid">${years.map((year) => `<div class="form-field"><label>${year}</label><input class="input-cell" name="value-${year}" type="number" step="any" value="${item.params.values?.[year] || 0}"></div>`).join("")}</div>`;
   }
-  if (method === "compound") {
-    return `<div class="control-grid">${editorNumber(`Base value (${state.controls.units})`, "amount", editorDraft.amount || 0)}${editorNumber("Annual growth %", "growthRatePercent", (editorDraft.growthRate || 0) * 100)}</div>`;
+  if (item.method === "single_value_growth") {
+    return `<div class="control-grid">${editorNumber("Base year", "baseYear", item.params.baseYear || years[0])}${editorNumber("Start value", "startValue", item.params.startValue || 0)}${editorNumber("Growth %", "growthRatePercent", (item.params.growthRate || 0) * 100)}</div>`;
   }
-  if (method === "straightLine") {
-    return `<div class="control-grid">${editorNumber(`Start value (${state.controls.units})`, "amount", editorDraft.amount || 0)}${editorNumber(`End value (${state.controls.units})`, "endValue", editorDraft.endValue || 0)}</div>`;
+  if (item.method === "percent_of_driver") {
+    return `<div class="control-grid">${editorSelect("Driver", "driver", item.params.driver || state.drivers[0]?.key, state.drivers.map((d) => d.key), driverName)}${editorNumber("Rate %", "ratePercent", (item.params.rate || 0) * 100)}</div>`;
   }
-  if (method === "percentRevenue") {
-    return `<div class="control-grid">${editorNumber("% of operating revenue", "ratePercent", (editorDraft.rate || 0) * 100)}</div>`;
+  if (item.method === "per_unit") {
+    return `<div class="control-grid">${editorSelect("Driver", "driver", item.params.driver || state.drivers[0]?.key, state.drivers.map((d) => d.key), driverName)}${editorNumber("Unit rate", "unitRate", item.params.unitRate || 0)}</div>`;
   }
-  if (method === "percentLine") {
-    return `<div class="control-grid">${editorSelect("Source line", "sourceLine", editorDraft.sourceLine || "Total Operating Revenue", LINE_ITEMS.map((item) => item.name))}${editorNumber("% of source line", "ratePercent", (editorDraft.rate || 0) * 100)}</div>`;
-  }
-  if (method === "volumePrice") {
-    return `<div class="control-grid">${editorNumber("Volume", "volume", editorDraft.volume || 0)}${editorNumber(`Price (${state.controls.units})`, "price", editorDraft.price || 0)}</div>`;
-  }
-  if (method === "oneOff") {
-    return `<div class="control-grid">${editorNumber(`Amount (${state.controls.units})`, "amount", editorDraft.amount || 0)}${editorNumber("One-off year", "oneOffYear", editorDraft.oneOffYear || years[0])}</div>`;
-  }
-  return `<div class="control-grid">${editorNumber(`Annual amount (${state.controls.units})`, "amount", editorDraft.amount || 0)}</div>`;
-}
-
-function editorText(label, name, value) {
-  return `<div class="form-field"><label>${escapeHTML(label)}</label><input class="input-cell" name="${name}" value="${escapeAttr(value || "")}"></div>`;
-}
-
-function editorNumber(label, name, value) {
-  return `<div class="form-field"><label>${escapeHTML(label)}</label><input class="input-cell" name="${name}" type="number" step="any" value="${escapeAttr(value ?? 0)}"></div>`;
-}
-
-function editorSelect(label, name, value, options, labels = {}) {
-  return `
-    <div class="form-field">
-      <label>${escapeHTML(label)}</label>
-      <select class="input-cell" name="${name}">
-        ${options.map((option) => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHTML(labels[option] || option)}</option>`).join("")}
-      </select>
-    </div>
-  `;
+  return `<div class="control-grid">${editorNumber("Annual amount", "amount", item.params.amount || 0)}</div>`;
 }
 
 function saveEditor(event) {
   event.preventDefault();
-  if (state.controls.locked) return toast("Scenario is locked. Unlock or duplicate before editing.");
+  if (state.settings.locked) return toast("Scenario is locked.");
   const form = new FormData(els.assumptionForm);
   const years = getYears();
-  const updated = {
-    ...editorDraft,
-    text: String(form.get("text") || ""),
-    title: String(form.get("title") || "Untitled assumption"),
-    category: String(form.get("category") || ASSUMPTION_CATEGORIES[0]),
-    targetLine: String(form.get("targetLine") || LINE_ITEMS[0].name),
-    method: String(form.get("method") || "yearSpecific"),
-    active: form.get("active") === "on",
-    startYear: Number(form.get("startYear") || years[0]),
-    endYear: Number(form.get("endYear") || years.at(-1)),
-    combinationLogic: String(form.get("combinationLogic") || "Add"),
-    source: String(form.get("source") || "User-entered"),
-    modifiedAt: today(),
-    modifiedBy: USER_NAME,
-  };
+  const updated = clone(editorDraft);
+  updated.source_text = String(form.get("source_text") || "");
+  updated.category = String(form.get("category") || TAXONOMY[0]);
+  updated.enabled = form.get("enabled") === "on";
+  updated.target.line = String(form.get("line") || "");
+  updated.method = String(form.get("method") || "flat_values");
+  updated.target.years = form.get("year-all") === "on" ? "all" : years.filter((year) => form.get(`year-${year}`) === "on");
+  updated.params = paramsFromForm(updated.method, form, years);
+  updated.depends_on = [];
+  updated.updated_at = today();
 
-  if (updated.method === "yearSpecific") {
-    updated.values = Object.fromEntries(years.map((year) => [year, Number(form.get(`value-${year}`) || 0)]));
-  } else {
-    updated.amount = Number(form.get("amount") || 0);
-    updated.endValue = Number(form.get("endValue") || 0);
-    updated.growthRate = Number(form.get("growthRatePercent") || 0) / 100;
-    updated.rate = Number(form.get("ratePercent") || 0) / 100;
-    updated.volume = Number(form.get("volume") || 0);
-    updated.price = Number(form.get("price") || 0);
-    updated.sourceLine = String(form.get("sourceLine") || "");
-    updated.oneOffYear = Number(form.get("oneOffYear") || years[0]);
-  }
-
-  mutate("Saved assumption", updated.id, () => {
-    const index = state.assumptions.findIndex((item) => item.id === updated.id);
-    if (index >= 0) {
-      updated.version = Number(state.assumptions[index].version || 1) + 1;
-      state.assumptions[index] = updated;
-    } else {
-      state.assumptions.push(updated);
-    }
-  }, editorDraft.title, updated.title);
-
+  mutate(`Saved formula card ${updated.id}: ${sourceTitle(updated.source_text)}`, () => {
+    const index = state.cards.findIndex((item) => item.id === updated.id);
+    if (index >= 0) state.cards[index] = updated;
+    else state.cards.push(updated);
+  });
   closeEditor();
 }
 
-function parseEditorText() {
-  const text = String(els.assumptionForm.querySelector("[name='text']").value || "");
-  const parsed = parseAssumptionText(text);
-  editorDraft = { ...editorDraft, ...parsed, text, confidence: parsed.confidence };
-  renderEditor();
-  toast("Text interpreted into a structured driver.");
+function paramsFromForm(method, form, years) {
+  if (method === "flat_values") return { values: Object.fromEntries(years.map((year) => [year, Number(form.get(`value-${year}`) || 0)])) };
+  if (method === "single_value_growth") return { baseYear: Number(form.get("baseYear") || years[0]), startValue: Number(form.get("startValue") || 0), growthRate: Number(form.get("growthRatePercent") || 0) / 100 };
+  if (method === "percent_of_driver") return { driver: String(form.get("driver") || ""), rate: Number(form.get("ratePercent") || 0) / 100 };
+  if (method === "per_unit") return { driver: String(form.get("driver") || ""), unitRate: Number(form.get("unitRate") || 0) };
+  return { amount: Number(form.get("amount") || 0) };
 }
 
-function parseAssumptionText(text) {
-  const lower = text.toLowerCase();
-  const amount = parseMoney(text);
-  const percentages = [...text.matchAll(/(-?\d+(?:\.\d+)?)\s*%/g)].map((match) => Number(match[1]) / 100);
-  const firstPct = percentages[0] || 0;
-  const yearMatch = lower.match(/year\s*(\d{4}|\d+)/);
-  const oneOffYear = yearMatch ? normalizeYear(Number(yearMatch[1])) : getYears()[0];
+async function interpretEditorText() {
+  const text = String(els.assumptionForm.querySelector("[name='source_text']").value || "");
+  const translated = await Translator.translate(text);
+  editorDraft = { ...editorDraft, ...translated, source_text: text, target: { ...editorDraft.target, ...(translated.target || {}) } };
+  renderEditor();
+  toast("Translator emitted a formula card.");
+}
 
-  if (lower.includes("fixed")) {
-    return { method: "fixed", amount, confidence: 0.78 };
-  }
-  if (lower.includes("one-off") || lower.includes("one off")) {
-    return { method: "oneOff", amount, oneOffYear, confidence: 0.77 };
-  }
-  if (lower.includes("of revenue") || lower.includes("of total revenue")) {
-    return { method: "percentRevenue", rate: firstPct, confidence: 0.82 };
-  }
-  if (lower.includes("multiplied by") || lower.includes(" x ")) {
-    const numbers = [...text.matchAll(/(-?\d+(?:,\d{3})*(?:\.\d+)?)/g)].map((match) => Number(match[1].replace(/,/g, "")));
-    return { method: "volumePrice", volume: numbers[0] || 0, price: numbers[1] || 0, confidence: 0.74 };
-  }
-  if (lower.includes("from") && lower.includes("to")) {
-    const amounts = parseAllMoney(text);
-    return { method: "straightLine", amount: amounts[0] || amount, endValue: amounts[1] || amount, confidence: 0.81 };
-  }
-  if (lower.includes("grow") || lower.includes("increase")) {
-    return { method: "compound", amount, growthRate: firstPct, confidence: 0.84 };
-  }
-  return { method: "yearSpecific", values: editorDraft.values || {}, confidence: 0.55 };
+const Translator = {
+  async translate(text) {
+    if (state.settings.translatorBackend === "live_api") {
+      try {
+        const result = await fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+        if (result.ok) return await result.json();
+      } catch {}
+      toast("Live API unavailable; using local parser.");
+    }
+    return localTranslate(text);
+  },
+};
+
+function localTranslate(text) {
+  const lower = text.toLowerCase();
+  const rate = firstPercent(text);
+  const amount = firstMoney(text);
+  if (lower.includes("programme size")) return { method: "percent_of_driver", params: { driver: "programme_size", rate: rate || 0.025 } };
+  if (lower.includes("guarantee volume")) return { method: "percent_of_driver", params: { driver: "guarantee_volume", rate: rate || 0.025 } };
+  if (lower.includes("per guarantee")) return { method: "per_unit", params: { driver: "guarantee_count", unitRate: amount || 0.05 } };
+  if (lower.includes("grows") || lower.includes("growth")) return { method: "single_value_growth", params: { baseYear: getYears()[0], startValue: amount || 1000, growthRate: rate || 0.05 } };
+  if (lower.includes("fixed") || lower.includes("same")) return { method: "fixed_per_year", params: { amount: amount || 1000 } };
+  return { method: "flat_values", params: { values: Object.fromEntries(getYears().map((year) => [year, amount || 0])) }, status: "needs_rewrite", hint: "Local parser could not infer a stronger method." };
 }
 
 function handleClick(event) {
+  const help = event.target.closest("[data-help]");
+  if (help) return openHelp(help.dataset.help, activeContextView());
+  const helpJump = event.target.closest("[data-help-jump]");
+  if (helpJump) {
+    const [target, section] = helpJump.dataset.helpJump.split(":");
+    return openHelp(target, section);
+  }
+  const guidePrint = event.target.closest("[data-print-guide]");
+  if (guidePrint) return printHelpDocument(guidePrint.dataset.printGuide);
   const nav = event.target.closest("[data-nav]");
-  if (nav) {
-    switchView(nav.dataset.nav);
-    return;
-  }
+  if (nav) return HELP_VIEWS.has(nav.dataset.nav) ? openHelp(nav.dataset.nav, activeContextView()) : switchView(nav.dataset.nav);
   const navItem = event.target.closest(".nav-item");
-  if (navItem) {
-    switchView(navItem.dataset.view);
-    return;
-  }
-  const edit = event.target.closest("[data-edit]");
-  if (edit) {
-    openEditor(edit.dataset.edit);
-    return;
-  }
-  const remove = event.target.closest("[data-delete-assumption]");
-  if (remove) {
-    deleteAssumption(remove.dataset.deleteAssumption);
-    return;
-  }
+  if (navItem) return HELP_VIEWS.has(navItem.dataset.view) ? openHelp(navItem.dataset.view, activeContextView()) : switchView(navItem.dataset.view);
+  if (event.target.closest("[data-open-new-card]")) return openEditor(null);
+  const edit = event.target.closest("[data-edit-card]");
+  if (edit) return openEditor(edit.dataset.editCard);
+  const delCard = event.target.closest("[data-delete-card]");
+  if (delCard) return deleteCard(delCard.dataset.deleteCard);
+  if (event.target.closest("[data-add-driver]")) return addDriver();
+  if (event.target.closest("[data-add-line]")) return addLine();
+  if (event.target.closest("[data-add-segment]")) return addSegment();
+  const removeSegment = event.target.closest("[data-remove-segment]");
+  if (removeSegment) return removeSegmentByKey(removeSegment.dataset.removeSegment);
+  const moveLine = event.target.closest("[data-move-line]");
+  if (moveLine) return moveLineByKey(moveLine.dataset.moveLine);
+  const removeLine = event.target.closest("[data-remove-line]");
+  if (removeLine) return removeLineByKey(removeLine.dataset.removeLine);
   const restore = event.target.closest("[data-restore-scenario]");
-  if (restore) {
-    restoreScenario(restore.dataset.restoreScenario);
-    return;
-  }
+  if (restore) return restoreScenario(restore.dataset.restoreScenario);
   const exportButton = event.target.closest("[data-export]");
-  if (exportButton) {
-    handleExport(exportButton.dataset.export);
-  }
+  if (exportButton) return handleExport(exportButton.dataset.export);
 }
 
 function handleChange(event) {
-  const toggle = event.target.closest(".assumption-toggle");
-  if (toggle) {
-    const id = toggle.dataset.id;
-    const item = state.assumptions.find((entry) => entry.id === id);
-    if (!item || state.controls.locked) return;
-    mutate("Toggled assumption", id, () => {
-      item.active = toggle.checked;
-      item.modifiedAt = today();
-    }, item.active ? "Active" : "Inactive", toggle.checked ? "Active" : "Inactive");
-    return;
+  const target = event.target;
+  if (state.settings.locked && target.dataset.setting !== "unitYear") {
+    if (target.matches("[data-toggle-card], [data-driver-field], [data-segment-name], [data-split-method], [data-split-value], [data-split-byline], [data-line-name], [data-line-type], [data-line-bound], .settings-input")) return toast("Scenario is locked.");
   }
-
-  const control = event.target.closest(".control-input");
-  if (control) {
-    updateControl(control);
-  }
+  if (target.matches("[data-toggle-card]")) return toggleCard(target.dataset.toggleCard, target.checked);
+  if (target.matches("[data-driver-field]")) return updateDriverField(target);
+  if (target.matches("[data-segment-name]")) return updateSegmentName(target);
+  if (target.matches("[data-split-method]")) return updateSplitMethod(target);
+  if (target.matches("[data-split-value]")) return updateSplitValue(target);
+  if (target.matches("[data-split-byline]")) return updateSplitByLine(target);
+  if (target.matches("[data-line-name]")) return updateLineName(target);
+  if (target.matches("[data-line-type]")) return updateLineType(target);
+  if (target.matches("[data-line-bound]")) return updateLineBound(target);
+  if (target.matches(".settings-input")) return updateSetting(target);
 }
 
 function handleInput(event) {
-  const control = event.target.closest(".control-input");
-  if (control && ["scenarioName"].includes(control.dataset.control)) {
-    updateControl(control, true);
-  }
+  const target = event.target;
+  if (target.matches("[data-line-name], [data-driver-field], [data-segment-name]")) return;
+  if (target.matches(".settings-input") && ["scenarioName"].includes(target.dataset.setting)) updateSetting(target, true);
 }
 
-function updateControl(control, light = false) {
-  if (state.controls.locked) return;
-  const key = control.dataset.control;
-  const oldValue = state.controls[key];
-  let value;
-  if (control.type === "checkbox") {
-    value = control.checked;
-  } else if (control.dataset.type === "percent") {
-    value = Number(control.value || 0) / 100;
-  } else if (control.type === "number") {
-    value = Number(control.value || 0);
-  } else {
-    value = control.value;
-  }
-  if (oldValue === value) return;
-  mutate("Changed control", key, () => {
-    state.controls[key] = value;
-  }, String(oldValue), String(value), light);
+function updateSetting(target, light = false) {
+  const key = target.dataset.setting;
+  const old = state.settings[key];
+  let value = target.type === "checkbox" ? target.checked : target.value;
+  if (target.type === "number" || ["startYear", "yearCount", "monthlyYearCount", "startMonth", "unitYear", "maxAnnualFigure", "maxCostRatio"].includes(key)) value = Number(value || 0);
+  if (key === "yearCount") value = Math.max(1, Math.min(10, value));
+  if (key === "monthlyYearCount") value = Math.max(1, Math.min(5, value));
+  mutate(`Changed setting ${key} from ${old} to ${value}`, () => { state.settings[key] = value; }, light);
 }
 
-function switchView(view) {
-  currentView = view;
-  document.querySelectorAll(".view").forEach((node) => node.classList.remove("active"));
-  document.querySelector(`#${view}View`)?.classList.add("active");
-  document.querySelectorAll(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.view === view));
+function updateDriverField(target) {
+  const [key, field] = target.dataset.driverField.split(":");
+  mutate(`Updated driver ${key}`, () => {
+    const item = driverByKey(key);
+    if (!item) return;
+    if (field === "growthRatePercent") item.growthRate = Number(target.value || 0) / 100;
+    else if (field === "baseValue") item.baseValue = Number(target.value || 0);
+    else item[field] = target.value;
+  });
+}
+
+function updateSegmentName(target) {
+  mutate(`Renamed segment ${target.dataset.segmentName}`, () => {
+    const item = state.unitEconomics.segments.find((segment) => segment.key === target.dataset.segmentName);
+    if (item) item.name = target.value;
+  });
+}
+
+function updateSplitMethod(target) {
+  mutate(`Changed split method for ${lineName(target.dataset.splitMethod)}`, () => {
+    splitFor(target.dataset.splitMethod).method = target.value;
+  });
+}
+
+function updateSplitValue(target) {
+  const [lineKey, segmentKey] = target.dataset.splitValue.split(":");
+  mutate(`Changed split value for ${lineName(lineKey)}`, () => {
+    splitFor(lineKey).values[segmentKey] = Number(target.value || 0);
+  });
+}
+
+function updateSplitByLine(target) {
+  mutate(`Changed by-line split for ${lineName(target.dataset.splitByline)}`, () => {
+    splitFor(target.dataset.splitByline).byLine = target.value;
+  });
+}
+
+function updateLineName(target) {
+  mutate(`Renamed P&L line ${target.dataset.lineName}`, () => {
+    const item = lineByKey(target.dataset.lineName);
+    if (item) item.name = target.value;
+  });
+}
+
+function updateLineType(target) {
+  mutate(`Changed P&L line type for ${lineName(target.dataset.lineType)}`, () => {
+    const item = lineByKey(target.dataset.lineType);
+    if (item) item.type = target.value;
+  });
+}
+
+function updateLineBound(target) {
+  mutate(`Changed bound for ${lineName(target.dataset.lineBound)}`, () => {
+    const item = lineByKey(target.dataset.lineBound);
+    if (item) item.bound = Number(target.value || 0);
+  });
+}
+
+function toggleCard(id, enabled) {
+  mutate(`${enabled ? "Enabled" : "Disabled"} formula card ${id}`, () => {
+    const item = state.cards.find((cardItem) => cardItem.id === id);
+    if (item) item.enabled = enabled;
+  });
+}
+
+function addDriver() {
+  const key = uniqueKey("driver", state.drivers.map((item) => item.key));
+  mutate(`Added driver ${key}`, () => state.drivers.push(driver(key, "New driver", "units", 1000, 0, "User-entered")));
+}
+
+function addLine() {
+  const key = uniqueKey("line", state.lines.map((item) => item.key));
+  mutate(`Added P&L line ${key}`, () => {
+    state.lines.push(line(key, "New line", "revenue"));
+    state.unitEconomics.splits[key] = { method: "even", values: {}, byLine: "" };
+  });
+}
+
+function addSegment() {
+  if (state.unitEconomics.segments.length >= 8) return toast("Maximum 8 segments.");
+  const key = uniqueKey("segment", state.unitEconomics.segments.map((item) => item.key));
+  mutate(`Added Unit Economics segment ${key}`, () => {
+    state.unitEconomics.segments.push({ key, name: "New Segment" });
+    for (const split of Object.values(state.unitEconomics.splits)) split.values[key] = 1;
+  });
+}
+
+function removeSegmentByKey(key) {
+  mutate(`Removed Unit Economics segment ${key}`, () => {
+    state.unitEconomics.segments = state.unitEconomics.segments.filter((item) => item.key !== key);
+    for (const split of Object.values(state.unitEconomics.splits)) delete split.values[key];
+  });
+}
+
+function moveLineByKey(action) {
+  const [key, dir] = action.split(":");
+  mutate(`Moved P&L line ${key} ${dir}`, () => {
+    const index = state.lines.findIndex((item) => item.key === key);
+    const swap = dir === "up" ? index - 1 : index + 1;
+    if (index < 0 || swap < 0 || swap >= state.lines.length) return;
+    [state.lines[index], state.lines[swap]] = [state.lines[swap], state.lines[index]];
+  });
+}
+
+function removeLineByKey(key) {
+  mutate(`Removed P&L line ${key}; dependent cards parked`, () => {
+    for (const item of state.cards) {
+      if (item.target.line === key) {
+        item.target.line = "";
+        item.enabled = false;
+        item.status = "needs_review";
+        item.hint = "Target line was removed; choose a new line.";
+      }
+    }
+    delete state.unitEconomics.splits[key];
+    state.lines = state.lines.filter((item) => item.key !== key);
+  });
+}
+
+function deleteCard(id) {
+  mutate(`Deleted formula card ${id}`, () => {
+    state.cards = state.cards.filter((item) => item.id !== id);
+  });
+  closeEditor();
 }
 
 function saveScenario() {
-  const name = state.controls.scenarioName || "Untitled Scenario";
-  mutate("Saved scenario", name, () => {
+  mutate(`Saved scenario ${state.settings.scenarioName}`, () => {
     state.scenarios.push({
       id: `SCN-${String(state.scenarios.length + 1).padStart(3, "0")}`,
-      name,
+      name: state.settings.scenarioName,
       savedAt: timestamp(),
-      locked: state.controls.locked,
-      note: "Manual scenario snapshot.",
       snapshot: snapshotFrom(state),
+      note: "Manual save.",
     });
-  }, "-", "Scenario snapshot saved");
+  });
   toast("Scenario saved.");
 }
 
 function duplicateScenario() {
-  const nextName = `${state.controls.scenarioName} Copy`;
-  mutate("Duplicated scenario", state.controls.scenarioName, () => {
-    state.controls.scenarioName = nextName;
-    state.controls.locked = false;
-  }, state.controls.scenarioName, nextName);
-  toast("Scenario duplicated and unlocked.");
+  mutate(`Duplicated scenario ${state.settings.scenarioName}`, () => {
+    state.settings.scenarioName = `${state.settings.scenarioName} Copy`;
+    state.settings.locked = false;
+  });
 }
 
 function toggleLock() {
-  mutate(state.controls.locked ? "Unlocked scenario" : "Locked scenario", state.controls.scenarioName, () => {
-    state.controls.locked = !state.controls.locked;
-  }, state.controls.locked ? "Locked" : "Editable", state.controls.locked ? "Editable" : "Locked");
+  mutate(`${state.settings.locked ? "Unlocked" : "Locked"} scenario`, () => {
+    state.settings.locked = !state.settings.locked;
+  });
 }
 
 function restoreScenario(id) {
-  const scenario = state.scenarios.find((item) => item.id === id);
-  if (!scenario) return;
-  mutate("Restored scenario", scenario.name, () => {
-    state.controls = clone(scenario.snapshot.controls);
-    state.assumptions = clone(scenario.snapshot.assumptions);
-  }, state.controls.scenarioName, scenario.name);
-  toast("Scenario restored.");
-}
-
-function deleteAssumption(id) {
-  if (state.controls.locked) return;
-  mutate("Deleted assumption", id, () => {
-    state.assumptions = state.assumptions.filter((item) => item.id !== id);
-  }, id, "-");
-  closeEditor();
+  const item = state.scenarios.find((scenario) => scenario.id === id);
+  if (!item) return;
+  mutate(`Restored scenario ${item.name}`, () => restoreSnapshot(item.snapshot));
 }
 
 function undo() {
-  const item = undoStack.pop();
-  if (!item) return;
-  redoStack.push(snapshotEditable());
-  restoreEditable(item);
-  recordAudit("Reversed action", "Undo", item.controls?.scenarioName || "-", state.controls.scenarioName, "Undo restored prior model state.");
+  const snapshot = undoStack.pop();
+  if (!snapshot) return;
+  redoStack.push(snapshotFrom(state));
+  restoreSnapshot(snapshot);
+  state.audit.push(auditEntry("Undo restored previous meaningful model state", "Undo", "-", "-"));
   render();
 }
 
 function redo() {
-  const item = redoStack.pop();
-  if (!item) return;
-  undoStack.push(snapshotEditable());
-  restoreEditable(item);
-  recordAudit("Redone action", "Redo", "-", state.controls.scenarioName, "Redo restored later model state.");
+  const snapshot = redoStack.pop();
+  if (!snapshot) return;
+  undoStack.push(snapshotFrom(state));
+  restoreSnapshot(snapshot);
+  state.audit.push(auditEntry("Redo restored later meaningful model state", "Redo", "-", "-"));
   render();
 }
 
-function mutate(action, target, fn, before = "-", after = "-", light = false) {
-  const beforeSnapshot = snapshotEditable();
+function mutate(text, fn, light = false) {
+  const before = snapshotFrom(state);
   fn();
-  if (!light) undoStack.push(beforeSnapshot);
+  if (!light) undoStack.push(before);
   redoStack = [];
-  recordAudit(action, target, before, after, "");
+  state.audit.push(auditEntry(text, "", "", ""));
   render();
 }
 
-function recordAudit(action, target, before, after, note) {
-  state.audit.push({
-    id: `AUD-${String(state.audit.length + 1).padStart(3, "0")}`,
-    timestamp: timestamp(),
-    action,
-    target,
-    before: String(before ?? "-"),
-    after: String(after ?? "-"),
-    user: USER_NAME,
-    note,
-  });
+function handleExport(type) {
+  const model = calculateModel();
+  if (type === "pdf" || type === "print") {
+    window.print();
+  } else if (type === "word") {
+    downloadFile("financial_model_scenario.doc", exportHtml(model), "application/msword");
+  } else if (type === "excel") {
+    downloadFile("financial_model_scenario.xls", exportHtml(model), "application/vnd.ms-excel");
+  } else if (type === "cardsCsv") {
+    downloadFile("formula_cards.csv", cardsCsv(), "text/csv");
+  } else if (type === "auditCsv") {
+    downloadFile("audit_trail.csv", auditCsv(), "text/csv");
+  } else if (type === "json") {
+    downloadFile("scenario.json", JSON.stringify({ settings: state.settings, lines: state.lines, drivers: state.drivers, cards: state.cards, unitEconomics: state.unitEconomics }, null, 2), "application/json");
+  }
+  state.audit.push(auditEntry(`Exported ${type} output`, "Export", "-", state.settings.scenarioName));
+  persist();
+}
+
+function switchView(view) {
+  currentView = view;
+  if (!HELP_VIEWS.has(view)) lastContextView = view;
+  document.querySelectorAll(".view").forEach((node) => node.classList.remove("active"));
+  document.querySelector(`#${view}View`)?.classList.add("active");
+  document.querySelectorAll(".nav-item").forEach((node) => node.classList.toggle("active", node.dataset.view === view));
 }
 
 function closeEditor() {
@@ -1468,54 +1634,368 @@ function closeEditor() {
   els.editorPanel.classList.remove("open");
 }
 
-function handleExport(type) {
-  const calc = calculateModel();
-  if (type === "json") {
-    downloadFile("scenario_export.json", JSON.stringify({ controls: state.controls, assumptions: state.assumptions, calculations: calc, audit: state.audit, sources: SOURCE_LOG }, null, 2), "application/json");
-  } else if (type === "assumptionsCsv") {
-    downloadFile("assumption_register.csv", assumptionsCsv(calc), "text/csv");
-  } else if (type === "auditCsv") {
-    downloadFile("audit_trail.csv", auditCsv(), "text/csv");
-  } else if (type === "excel") {
-    downloadFile("assumption_based_financial_model.xls", excelHtml(calc), "application/vnd.ms-excel");
-  } else if (type === "print") {
-    window.print();
-  }
-  recordAudit("Exported scenario", type, "-", state.controls.scenarioName, `Generated ${type} export.`);
-  persist();
+function getYears() {
+  const count = state.settings.granularity === "monthly" ? Math.min(5, Number(state.settings.monthlyYearCount || 5)) : Math.min(10, Number(state.settings.yearCount || 5));
+  return Array.from({ length: count }, (_, index) => Number(state.settings.startYear || 2025) + index);
 }
 
-function assumptionsCsv(calc) {
+function getPeriods() {
   const years = getYears();
-  const header = ["ID", "Category", "Title", "Target Line", "Method", "Active", "Source", ...years];
-  const rows = state.assumptions.map((item) => {
-    const values = calculateAssumptionValues(item, years, calc, { preview: true });
-    return [item.id, item.category, item.title, item.targetLine, METHOD_LABELS[item.method] || item.method, item.active ? "Active" : "Inactive", item.source, ...years.map((year) => values[year] || 0)];
-  });
-  return toCsv([header, ...rows]);
+  if (state.settings.granularity === "annual") return years.map((year) => ({ key: String(year), year, label: String(year) }));
+  const periods = [];
+  for (const year of years) {
+    for (let offset = 0; offset < 12; offset += 1) {
+      const month = ((Number(state.settings.startMonth || 1) - 1 + offset) % 12) + 1;
+      periods.push({ key: `${year}-${String(month).padStart(2, "0")}`, year, month, label: `${MONTHS[month - 1]} ${year}` });
+    }
+  }
+  return periods;
 }
 
-function auditCsv() {
+function getDisplayPeriods() {
+  return getPeriods();
+}
+
+function targetCoversYear(targetYears, year) {
+  if (targetYears === "all") return true;
+  return Array.isArray(targetYears) && targetYears.map(Number).includes(Number(year));
+}
+
+function targetYearsToArray(targetYears, years) {
+  if (targetYears === "all") return years;
+  return Array.isArray(targetYears) ? targetYears.map(Number) : [];
+}
+
+function targetYearsLabel(targetYears) {
+  if (targetYears === "all") return "All years";
+  if (!Array.isArray(targetYears) || !targetYears.length) return "Parked";
+  const sorted = [...targetYears].map(Number).sort();
+  const consecutive = sorted.every((year, index) => index === 0 || year === sorted[index - 1] + 1);
+  return consecutive && sorted.length > 1 ? `${sorted[0]}-${sorted[sorted.length - 1]}` : sorted.join(", ");
+}
+
+function blankYearSeries(years) {
+  return Object.fromEntries(years.map((year) => [year, 0]));
+}
+
+function blankPeriodSeries(periods) {
+  return Object.fromEntries(periods.map((period) => [period.key, 0]));
+}
+
+function lineByKey(key) {
+  return state.lines.find((item) => item.key === key);
+}
+
+function driverByKey(key) {
+  return state.drivers.find((item) => item.key === key);
+}
+
+function lineName(key) {
+  return lineByKey(key)?.name || key || "Parked";
+}
+
+function driverName(key) {
+  return driverByKey(key)?.name || key || "Missing driver";
+}
+
+function splitFor(lineKey) {
+  if (!state.unitEconomics.splits[lineKey]) state.unitEconomics.splits[lineKey] = { method: "even", values: {}, byLine: "" };
+  return state.unitEconomics.splits[lineKey];
+}
+
+function createsSplitCycle(lineKey, byLine) {
+  let cursor = byLine;
+  const seen = new Set([lineKey]);
+  while (cursor) {
+    if (seen.has(cursor)) return true;
+    seen.add(cursor);
+    const split = splitFor(cursor);
+    cursor = split.method === "by_line" ? split.byLine : "";
+  }
+  return false;
+}
+
+function signedAnnualForCard(cardItem, annual) {
+  const lineItem = lineByKey(cardItem.target.line);
+  if (!lineItem) return annual;
+  return Object.fromEntries(Object.entries(annual).map(([year, value]) => [year, lineItem.type === "cost" ? -value : value]));
+}
+
+function operationText(item) {
+  if (item.method === "flat_values") return "engine reads explicit annual values";
+  if (item.method === "single_value_growth") return `${money(item.params.startValue)} grows ${percent(item.params.growthRate)} from ${item.params.baseYear}`;
+  if (item.method === "percent_of_driver") return `${percent(item.params.rate)} x ${driverName(item.params.driver)}`;
+  if (item.method === "per_unit") return `${money(item.params.unitRate)} x ${driverName(item.params.driver)}`;
+  if (item.method === "fixed_per_year") return `${money(item.params.amount)} every year`;
+  return "needs rewrite";
+}
+
+function defaultParamsForMethod(method, years) {
+  if (method === "flat_values") return { values: Object.fromEntries(years.map((year) => [year, 0])) };
+  if (method === "single_value_growth") return { baseYear: years[0], startValue: 1000, growthRate: 0.05 };
+  if (method === "percent_of_driver") return { driver: state.drivers[0]?.key || "", rate: 0.025 };
+  if (method === "per_unit") return { driver: state.drivers[0]?.key || "", unitRate: 1 };
+  return { amount: 1000 };
+}
+
+function sourceTitle(text) {
+  const trimmed = String(text || "").trim();
+  return trimmed.length > 58 ? `${trimmed.slice(0, 58)}...` : trimmed || "Untitled assumption";
+}
+
+function kpi(label, value, sub, className = "") {
+  return `<div class="kpi"><p class="kpi-label">${escapeHTML(label)}</p><p class="kpi-value ${className}">${value}</p><p class="kpi-sub">${escapeHTML(sub)}</p></div>`;
+}
+
+function activeContextView() {
+  return normalizeContextView(HELP_VIEWS.has(currentView) ? lastContextView : currentView);
+}
+
+function normalizeContextView(view) {
+  return VIEW_LABELS[view] ? view : "dashboard";
+}
+
+function openHelp(target, context) {
+  const helpView = target === "quickStart" ? "quickStart" : "guide";
+  lastContextView = normalizeContextView(context);
+  switchView(helpView);
+  requestAnimationFrame(() => jumpToHelpSection(helpView, lastContextView));
+}
+
+function jumpToHelpSection(helpView, context) {
+  const prefix = helpView === "quickStart" ? "quick" : "guide";
+  const normalized = normalizeContextView(context);
+  document.querySelectorAll(`#${helpView}View .help-intro .mini-badge`).forEach((node) => {
+    node.textContent = `${VIEW_LABELS[normalized]} context`;
+  });
+  const fallback = helpView === "quickStart" ? QUICK_START_STEPS[0]?.view : GUIDE_SECTIONS[0]?.view;
+  const target = document.querySelector(`#${prefix}-${normalized}`) || document.querySelector(`#${prefix}-${fallback}`);
+  if (!target) return;
+  document.querySelectorAll(".context-highlight").forEach((node) => node.classList.remove("context-highlight"));
+  target.classList.add("context-highlight");
+  target.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function listHTML(title, items) {
+  return `<div class="help-block"><h4>${escapeHTML(title)}</h4><ul>${items.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul></div>`;
+}
+
+function guideSectionHTML(item) {
+  return `
+    <section class="panel help-section" id="guide-${item.view}" tabindex="-1">
+      <div class="panel-header">
+        <h3 class="panel-title">${escapeHTML(item.title)}</h3>
+        <span class="mini-badge">${escapeHTML(VIEW_LABELS[item.view])}</span>
+      </div>
+      <div class="panel-body">
+        <p class="help-summary">${escapeHTML(item.summary)}</p>
+        <div class="help-detail-grid">
+          ${listHTML("Use this screen when", item.useWhen)}
+          ${listHTML("Core workflow", item.actions)}
+          ${listHTML("Review checks", item.checks)}
+        </div>
+        <div class="button-row">
+          <button class="secondary-button" data-nav="${item.view}" type="button">Open ${escapeHTML(item.title)}</button>
+          <button class="ghost-button" data-help-jump="quickStart:${item.view}" type="button">Quick Start step</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function quickStepHTML(item) {
+  return `
+    <section class="panel quick-step" id="quick-${item.view}" tabindex="-1">
+      <div class="panel-header">
+        <h3 class="panel-title">${escapeHTML(item.title)}</h3>
+        <span class="mini-badge">${escapeHTML(VIEW_LABELS[item.view])}</span>
+      </div>
+      <div class="panel-body">
+        <p class="help-summary">${escapeHTML(item.goal)}</p>
+        ${listHTML("Do this", item.actions)}
+        <div class="notice"><strong>Move on when:</strong> ${escapeHTML(item.exit)}</div>
+        <div class="button-row">
+          <button class="secondary-button" data-nav="${item.view}" type="button">Open ${escapeHTML(VIEW_LABELS[item.view])}</button>
+          <button class="ghost-button" data-help-jump="guide:${item.view}" type="button">Full guide section</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function printHelpDocument(type) {
+  const isQuick = type === "quickStart";
+  const title = isQuick ? "Quick Start Guide" : "User Guide";
+  const popup = window.open("", "_blank");
+  if (!popup) {
+    toast("Allow pop-ups, then try Download PDF again.");
+    return;
+  }
+  popup.document.open();
+  popup.document.write(helpPrintHTML(title, isQuick ? quickStartPrintBody() : userGuidePrintBody()));
+  popup.document.close();
+  popup.focus();
+  state.audit.push(auditEntry(`Opened ${title} PDF print view`, "Guide", "-", title));
+  persist();
+  setTimeout(() => popup.print(), 250);
+}
+
+function helpPrintHTML(title, body) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHTML(title)}</title><style>${helpPrintStyles()}</style></head><body><header><p>Assumption-Based Financial Modelling Engine</p><h1>${escapeHTML(title)}</h1><p>${escapeHTML(state.settings.scenarioName)}</p></header>${body}</body></html>`;
+}
+
+function userGuidePrintBody() {
+  return `
+    <main>
+      <section><h2>How to use this guide</h2><p>The User Guide is organized by app screen. Each section explains when to use the screen, the core workflow, and the checks to complete before relying on the output.</p></section>
+      ${GUIDE_SECTIONS.map((item) => `<section><h2>${escapeHTML(item.title)}</h2><p>${escapeHTML(item.summary)}</p>${listHTML("Use this screen when", item.useWhen)}${listHTML("Core workflow", item.actions)}${listHTML("Review checks", item.checks)}</section>`).join("")}
+      <section><h2>Sources and implementation notes</h2>${SOURCE_LOG.map((item) => `<h3>${escapeHTML(item.item)}</h3><p><strong>${escapeHTML(item.source)}</strong></p><p>${escapeHTML(item.note)}</p>`).join("")}<p>Static GitHub Pages can host the app, but cannot run the future live /api/translate backend.</p></section>
+    </main>
+  `;
+}
+
+function quickStartPrintBody() {
+  return `
+    <main>
+      <section><h2>Purpose</h2><p>The Quick Start Guide is the shortest path from opening the model to saving and exporting a reviewable scenario.</p></section>
+      ${QUICK_START_STEPS.map((item) => `<section><h2>${escapeHTML(item.title)}</h2><p>${escapeHTML(item.goal)}</p>${listHTML("Do this", item.actions)}<p><strong>Move on when:</strong> ${escapeHTML(item.exit)}</p></section>`).join("")}
+    </main>
+  `;
+}
+
+function helpPrintStyles() {
+  return `
+    body{margin:32px;color:#1d2428;font-family:Inter,Aptos,"Segoe UI",Arial,sans-serif;font-size:12px;line-height:1.45}
+    header{border-bottom:2px solid #172b4d;margin-bottom:24px;padding-bottom:12px}
+    header p{margin:0 0 4px;color:#607078;font-weight:700;text-transform:uppercase}
+    h1{margin:0;color:#172b4d;font-size:26px}
+    h2{margin:22px 0 8px;color:#172b4d;font-size:18px;break-after:avoid}
+    h3{margin:14px 0 4px;font-size:14px}
+    h4{margin:12px 0 4px;font-size:12px;text-transform:uppercase;color:#607078}
+    section{break-inside:avoid;margin-bottom:18px}
+    ul{margin:6px 0 10px 18px;padding:0}
+    li{margin:0 0 5px}
+    p{margin:0 0 8px}
+    strong{color:#1d2428}
+  `;
+}
+
+function coverage(title, status, text) {
+  return `<div class="coverage-card"><strong>${escapeHTML(title)}</strong><span class="mini-badge ${status === "Built" ? "pass" : "warn"}">${escapeHTML(status)}</span><p>${escapeHTML(text)}</p></div>`;
+}
+
+function impactStrip(years, series) {
+  return `<div class="impact-strip">${years.map((year) => `<span class="${(series[year] || 0) < 0 ? "negative" : "positive"}">${year}: ${money(series[year] || 0)}</span>`).join("")}</div>`;
+}
+
+function lineChart(labels, series) {
+  const width = 760;
+  const height = 240;
+  const pad = 34;
+  const values = series.flatMap((item) => item.values);
+  const min = Math.min(0, ...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const x = (i) => pad + (i * (width - pad * 2)) / Math.max(1, labels.length - 1);
+  const y = (value) => height - pad - ((value - min) * (height - pad * 2)) / span;
+  return `
+    <div class="chart-box"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Annual trend chart">
+      <rect x="0" y="0" width="${width}" height="${height}" fill="#fff"></rect>
+      <line x1="${pad}" y1="${y(0)}" x2="${width - pad}" y2="${y(0)}" stroke="#aebbb7"></line>
+      ${series.map((item) => `<polyline points="${item.values.map((value, i) => `${x(i)},${y(value)}`).join(" ")}" fill="none" stroke="${item.color}" stroke-width="3"></polyline>${item.values.map((value, i) => `<circle cx="${x(i)}" cy="${y(value)}" r="3.5" fill="${item.color}"></circle>`).join("")}`).join("")}
+      ${labels.map((label, i) => `<text x="${x(i)}" y="${height - 8}" text-anchor="middle" font-size="12" fill="#607078">${label}</text>`).join("")}
+    </svg></div>`;
+}
+
+function miniPL(segment, unit, year) {
+  return `<div class="panel"><div class="panel-header"><h3 class="panel-title">${escapeHTML(segment.name)}</h3><span class="mini-badge">${year}</span></div><div class="panel-body"><table><tbody>${state.lines.map((lineItem) => `<tr><td>${escapeHTML(lineItem.name)}</td><td class="number">${money(unit.lineSegment[lineItem.key]?.[segment.key]?.[year] || 0)}</td></tr>`).join("")}<tr class="total-row"><td>Profit / (Loss)</td><td class="number">${money(unit.segmentTotal[segment.key]?.[year] || 0)}</td></tr></tbody></table></div></div>`;
+}
+
+function valueCell(value) {
+  return `<td class="number ${value < 0 ? "negative" : ""}">${money(value)}</td>`;
+}
+
+function settingField(label, key, type, value, opts = {}) {
+  return `<div class="form-field"><label>${escapeHTML(label)}</label><input class="settings-input input-cell" data-setting="${key}" type="${type}" value="${escapeAttr(value)}" ${opts.min ? `min="${opts.min}"` : ""} ${opts.max ? `max="${opts.max}"` : ""} ${state.settings.locked ? "disabled" : ""}></div>`;
+}
+
+function settingSelect(label, key, value, options, labelFn = (x) => x) {
+  const disabled = state.settings.locked && key !== "unitYear" ? "disabled" : "";
+  return `<div class="form-field"><label>${escapeHTML(label)}</label>${selectHTML(`class="settings-input input-cell" data-setting="${key}" ${disabled}`, String(value), options.map(String), labelFn)}</div>`;
+}
+
+function editorNumber(label, name, value) {
+  return `<div class="form-field"><label>${escapeHTML(label)}</label><input class="input-cell" name="${name}" type="number" step="any" value="${escapeAttr(value)}"></div>`;
+}
+
+function editorSelect(label, name, value, options, labelFn = (x) => x) {
+  return `<div class="form-field"><label>${escapeHTML(label)}</label>${selectHTML(`class="input-cell" name="${name}"`, value, options, labelFn)}</div>`;
+}
+
+function selectHTML(attrs, value, options, labelFn = (x) => x) {
+  return `<select ${attrs}>${options.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === String(value) ? "selected" : ""}>${escapeHTML(labelFn(option))}</option>`).join("")}</select>`;
+}
+
+function splitMethodLabel(key) {
+  return ({ even: "Even", ratio: "Ratio", percentages: "Percentages", per_segment_quantity: "Per-segment quantity", by_line: "By another line split" })[key] || key;
+}
+
+function check(name, count, where, notes) {
+  return { name, count, status: count ? "needs_review" : "ok", where, notes };
+}
+
+function firstPercent(text) {
+  const match = String(text).match(/(-?\d+(?:\.\d+)?)\s*%/);
+  return match ? Number(match[1]) / 100 : 0;
+}
+
+function firstMoney(text) {
+  const match = String(text).match(/RM\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*(million|mil|m|thousand|k)?/i);
+  if (!match) return 0;
+  const raw = Number(match[1].replace(/,/g, ""));
+  const unit = String(match[2] || "").toLowerCase();
+  if (["million", "mil", "m"].includes(unit)) return raw * 1000;
+  return raw;
+}
+
+function money(value) {
+  const number = Number(value || 0);
+  if (Math.abs(number) < 0.05) return "-";
+  const formatted = Math.abs(number).toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+  return number < 0 ? `(${formatted})` : formatted;
+}
+
+function percent(value) {
+  return `${round(Number(value || 0) * 100, 1)}%`;
+}
+
+function round(value, digits = 1) {
+  const factor = 10 ** digits;
+  return Math.round(Number(value || 0) * factor) / factor;
+}
+
+function negateSeries(series) {
+  return Object.fromEntries(Object.entries(series || {}).map(([key, value]) => [key, -value]));
+}
+
+function cardsCsv() {
+  const model = calculateModel();
+  const statuses = Object.fromEntries(validateModel(model).cards.map((entry) => [entry.id, entry]));
   return toCsv([
-    ["ID", "Timestamp", "Action", "Target", "Before", "After", "User", "Note"],
-    ...state.audit.map((entry) => [entry.id, entry.timestamp, entry.action, entry.target, entry.before, entry.after, entry.user, entry.note]),
+    ["id", "category", "source_text", "enabled", "target_line", "target_years", "method", "params", "depends_on", "status", "validation_hint"],
+    ...state.cards.map((item) => {
+      const status = statuses[item.id] || { status: item.status, hint: item.hint };
+      return [item.id, item.category, item.source_text, item.enabled, item.target.line, targetYearsLabel(item.target.years), item.method, JSON.stringify(item.params), JSON.stringify(item.depends_on), status.status, status.hint];
+    }),
   ]);
 }
 
-function excelHtml(calc) {
-  const years = getYears();
-  const assumptionRows = state.assumptions.map((item) => {
-    const values = calculateAssumptionValues(item, years, calc, { preview: true });
-    return `<tr><td>${item.id}</td><td>${item.category}</td><td>${item.title}</td><td>${item.targetLine}</td><td>${METHOD_LABELS[item.method]}</td><td>${item.active ? "Active" : "Inactive"}</td>${years.map((year) => `<td>${values[year] || 0}</td>`).join("")}</tr>`;
-  }).join("");
-  return `
-    <html><head><meta charset="utf-8"><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px}th{background:#dcefeb}</style></head><body>
-    <h1>${escapeHTML(state.controls.scenarioName)}</h1>
-    <h2>P&L</h2>${plTable(calc, false)}
-    <h2>Assumptions</h2><table><thead><tr><th>ID</th><th>Category</th><th>Title</th><th>Target Line</th><th>Method</th><th>Active</th>${years.map((year) => `<th>${year}</th>`).join("")}</tr></thead><tbody>${assumptionRows}</tbody></table>
-    <h2>Audit Trail</h2><pre>${escapeHTML(auditCsv())}</pre>
-    </body></html>
-  `;
+function auditCsv() {
+  return toCsv([["id", "timestamp", "event", "user"], ...state.audit.map((item) => [item.id, item.timestamp, item.text, item.user])]);
+}
+
+function exportHtml(model) {
+  return `<html><head><meta charset="utf-8"><style>table{border-collapse:collapse}td,th{border:1px solid #999;padding:4px}th{background:#e7eeeb}</style></head><body><h1>${escapeHTML(state.settings.scenarioName)}</h1><h2>P&L</h2>${plTable(model, getDisplayPeriods())}<h2>Formula Cards</h2><pre>${escapeHTML(cardsCsv())}</pre>${state.settings.includeAuditTrail ? `<h2>Audit</h2><pre>${escapeHTML(auditCsv())}</pre>` : ""}</body></html>`;
 }
 
 function downloadFile(filename, content, mimeType) {
@@ -1531,174 +2011,65 @@ function downloadFile(filename, content, mimeType) {
   toast(`${filename} downloaded.`);
 }
 
-function kpi(label, value, sub, className = "") {
-  return `<div class="kpi"><p class="kpi-label">${escapeHTML(label)}</p><p class="kpi-value ${className}">${value}</p><p class="kpi-sub">${escapeHTML(sub)}</p></div>`;
-}
-
-function lineChart(labels, series) {
-  const width = 760;
-  const height = 240;
-  const pad = 34;
-  const allValues = series.flatMap((item) => item.values);
-  const min = Math.min(0, ...allValues);
-  const max = Math.max(...allValues);
-  const span = max - min || 1;
-  const x = (index) => pad + (index * (width - pad * 2)) / Math.max(1, labels.length - 1);
-  const y = (value) => height - pad - ((value - min) * (height - pad * 2)) / span;
-  const lines = series.map((item) => {
-    const points = item.values.map((value, index) => `${x(index)},${y(value)}`).join(" ");
-    const dots = item.values.map((value, index) => `<circle cx="${x(index)}" cy="${y(value)}" r="3.5" fill="${item.color}"></circle>`).join("");
-    return `<polyline points="${points}" fill="none" stroke="${item.color}" stroke-width="3"></polyline>${dots}`;
-  }).join("");
-  const axisLabels = labels.map((label, index) => `<text x="${x(index)}" y="${height - 8}" text-anchor="middle" font-size="12" fill="#607078">${label}</text>`).join("");
-  const zeroY = y(0);
-  return `
-    <div class="chart-box">
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Revenue and PBT line chart">
-        <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>
-        <line x1="${pad}" y1="${zeroY}" x2="${width - pad}" y2="${zeroY}" stroke="#aebbb7" stroke-width="1"></line>
-        <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" stroke="#d7dfdc"></line>
-        <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#d7dfdc"></line>
-        ${lines}
-        ${axisLabels}
-      </svg>
-    </div>
-  `;
-}
-
-function getYears() {
-  const start = Number(state.controls.startYear || 2025);
-  const duration = Math.max(1, Number(state.controls.duration || 5));
-  return Array.from({ length: duration }, (_, index) => start + index);
-}
-
-function blankSeries(years) {
-  return Object.fromEntries(years.map((year) => [year, 0]));
-}
-
-function addValues(targetLine, values, years, lineValues, metricValues) {
-  const bucket = FINANCIAL_METRICS.includes(targetLine) ? metricValues : lineValues;
-  if (!bucket[targetLine]) bucket[targetLine] = blankSeries(years);
-  for (const year of years) {
-    bucket[targetLine][year] += Number(values[year] || 0);
-  }
-}
-
-function sumLines(lines, year, lineValues) {
-  return lines.reduce((sum, line) => sum + (lineValues[line]?.[year] || 0), 0);
-}
-
-function operatingRevenueFromLines(lineValues, year) {
-  return sumLines(["Distribution fee", "Referral fee", "Cr. Guarantee Processing fee", "Development Fee", "Service fee for PD model", "Recurring imSME service fee", "Digital guarantee"], year, lineValues || {});
-}
-
-function money(value) {
-  const number = Number(value || 0);
-  if (Math.abs(number) < 0.05) return "-";
-  const formatted = Math.abs(number).toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 0 });
-  return number < 0 ? `(${formatted})` : formatted;
-}
-
-function percent(value) {
-  if (!Number.isFinite(Number(value))) return "-";
-  return `${(Number(value) * 100).toLocaleString("en-US", { maximumFractionDigits: 1 })}%`;
-}
-
-function formatNumber(value, digits = 1) {
-  if (!Number.isFinite(Number(value))) return "-";
-  return Number(value).toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits });
-}
-
-function safeDivide(a, b) {
-  return b ? a / b : 0;
-}
-
-function parseMoney(text) {
-  const all = parseAllMoney(text);
-  return all[0] || 0;
-}
-
-function parseAllMoney(text) {
-  const matches = [...text.matchAll(/RM\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*(million|mil|m|thousand|k)?/gi)];
-  return matches.map((match) => {
-    const base = Number(match[1].replace(/,/g, ""));
-    const unit = String(match[2] || "").toLowerCase();
-    if (["million", "mil", "m"].includes(unit)) return base * 1000;
-    if (["thousand", "k"].includes(unit)) return base;
-    return base;
-  });
-}
-
-function normalizeYear(value) {
-  if (value > 2000) return value;
-  return Number(state.controls.startYear || 2025) + value - 1;
-}
-
-function escapeHTML(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function escapeAttr(value) {
-  return escapeHTML(value);
-}
-
 function toCsv(rows) {
-  return rows
-    .map((row) => row.map((cell) => {
-      const value = String(cell ?? "");
-      return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-    }).join(","))
-    .join("\n");
+  return rows.map((row) => row.map((cell) => {
+    const value = String(cell ?? "");
+    return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  }).join(",")).join("\n");
 }
 
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
+function auditEntry(text, target, before, after) {
+  return { id: `AUD-${String(Date.now()).slice(-6)}-${Math.floor(Math.random() * 100)}`, timestamp: timestamp(), text, target, before, after, user: USER_NAME };
 }
 
-function snapshotFrom(sourceState) {
+function snapshotFrom(source) {
   return {
-    controls: clone(sourceState.controls),
-    assumptions: clone(sourceState.assumptions),
+    settings: clone(source.settings),
+    lines: clone(source.lines),
+    drivers: clone(source.drivers),
+    cards: clone(source.cards),
+    unitEconomics: clone(source.unitEconomics),
+    scenarios: clone(source.scenarios || []),
   };
 }
 
-function snapshotEditable() {
-  return {
-    controls: clone(state.controls),
-    assumptions: clone(state.assumptions),
-    scenarios: clone(state.scenarios),
-  };
-}
-
-function restoreEditable(snapshot) {
-  state.controls = clone(snapshot.controls);
-  state.assumptions = clone(snapshot.assumptions);
+function restoreSnapshot(snapshot) {
+  state.settings = clone(snapshot.settings);
+  state.lines = clone(snapshot.lines);
+  state.drivers = clone(snapshot.drivers);
+  state.cards = clone(snapshot.cards);
+  state.unitEconomics = clone(snapshot.unitEconomics);
   state.scenarios = clone(snapshot.scenarios || state.scenarios);
 }
 
 function persist() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // Direct file access can restrict storage in some browser settings.
-  }
+  } catch {}
 }
 
 function updateButtons() {
   document.querySelector("#undoButton").disabled = undoStack.length === 0;
   document.querySelector("#redoButton").disabled = redoStack.length === 0;
+  document.querySelector("#newAssumptionButton").disabled = state.settings.locked;
 }
 
-function nextAssumptionId() {
-  const next = state.assumptions.length + 1;
-  let id = `ASM-${String(next).padStart(3, "0")}`;
-  while (state.assumptions.some((item) => item.id === id)) {
-    id = `ASM-${String(Number(id.slice(4)) + 1).padStart(3, "0")}`;
+function uniqueKey(prefix, existing) {
+  let index = existing.length + 1;
+  let key = `${prefix}_${index}`;
+  while (existing.includes(key)) {
+    index += 1;
+    key = `${prefix}_${index}`;
+  }
+  return key;
+}
+
+function nextCardId() {
+  let index = state.cards.length + 1;
+  let id = `FC-${String(index).padStart(3, "0")}`;
+  while (state.cards.some((item) => item.id === id)) {
+    index += 1;
+    id = `FC-${String(index).padStart(3, "0")}`;
   }
   return id;
 }
@@ -1709,14 +2080,24 @@ function today() {
 
 function timestamp() {
   const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const time = now.toTimeString().slice(0, 5);
-  return `${date} ${time}`;
+  return `${now.toISOString().slice(0, 10)} ${now.toTimeString().slice(0, 5)}`;
 }
 
 function toast(message) {
   els.toast.textContent = message;
   els.toast.classList.add("visible");
-  window.clearTimeout(toast.timer);
-  toast.timer = window.setTimeout(() => els.toast.classList.remove("visible"), 2200);
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => els.toast.classList.remove("visible"), 2200);
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+function escapeAttr(value) {
+  return escapeHTML(value);
 }
