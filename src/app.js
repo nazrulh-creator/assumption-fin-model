@@ -598,12 +598,12 @@ function renderDashboard(model, validation, unit) {
           </div>
           <div class="panel-body">
             ${lineChart(years, [
-              { label: "Revenue", values: years.map((year) => model.annual.revenue[year] || 0), color: "#0f5ed7" },
-              { label: "Profit / (Loss)", values: years.map((year) => model.annual.total[year] || 0), color: "#b3261e" },
+              { label: "Revenue", values: years.map((year) => model.annual.revenue[year] || 0), color: "#274CAF" },
+              { label: "Profit / (Loss)", values: years.map((year) => model.annual.total[year] || 0), color: "#FF8819" },
             ])}
             <div class="legend">
-              <span class="legend-item"><span class="swatch" style="background:#0f5ed7"></span>Revenue</span>
-              <span class="legend-item"><span class="swatch" style="background:#b3261e"></span>Profit / (Loss)</span>
+              <span class="legend-item"><span class="swatch" style="background:#274CAF"></span>Revenue</span>
+              <span class="legend-item"><span class="swatch" style="background:#FF8819"></span>Profit / (Loss)</span>
             </div>
           </div>
         </div>
@@ -1992,18 +1992,18 @@ function quickStartPrintBody() {
 
 function helpPrintStyles() {
   return `
-    body{margin:32px;color:#1d2428;font-family:Inter,Aptos,"Segoe UI",Arial,sans-serif;font-size:12px;line-height:1.45}
-    header{border-bottom:2px solid #172b4d;margin-bottom:24px;padding-bottom:12px}
-    header p{margin:0 0 4px;color:#607078;font-weight:700;text-transform:uppercase}
-    h1{margin:0;color:#172b4d;font-size:26px}
-    h2{margin:22px 0 8px;color:#172b4d;font-size:18px;break-after:avoid}
+    body{margin:32px;color:#121c2b;font-family:Figtree,Inter,Aptos,"Segoe UI",Arial,sans-serif;font-size:12px;line-height:1.45}
+    header{border-bottom:2px solid #003A70;margin-bottom:24px;padding-bottom:12px}
+    header p{margin:0 0 4px;color:#666666;font-weight:700;text-transform:uppercase}
+    h1{margin:0;color:#003A70;font-size:26px}
+    h2{margin:22px 0 8px;color:#003A70;font-size:18px;break-after:avoid}
     h3{margin:14px 0 4px;font-size:14px}
-    h4{margin:12px 0 4px;font-size:12px;text-transform:uppercase;color:#607078}
+    h4{margin:12px 0 4px;font-size:12px;text-transform:uppercase;color:#666666}
     section{break-inside:avoid;margin-bottom:18px}
     ul{margin:6px 0 10px 18px;padding:0}
     li{margin:0 0 5px}
     p{margin:0 0 8px}
-    strong{color:#1d2428}
+    strong{color:#121c2b}
   `;
 }
 
@@ -2054,9 +2054,9 @@ function lineChart(labels, series) {
   return `
     <div class="chart-box"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Annual trend chart">
       <rect x="0" y="0" width="${width}" height="${height}" fill="#fff"></rect>
-      <line x1="${pad}" y1="${y(0)}" x2="${width - pad}" y2="${y(0)}" stroke="#aebbb7"></line>
+      <line x1="${pad}" y1="${y(0)}" x2="${width - pad}" y2="${y(0)}" stroke="#8FB2CA"></line>
       ${series.map((item) => `<polyline points="${item.values.map((value, i) => `${x(i)},${y(value)}`).join(" ")}" fill="none" stroke="${item.color}" stroke-width="3"></polyline>${item.values.map((value, i) => `<circle cx="${x(i)}" cy="${y(value)}" r="3.5" fill="${item.color}"></circle>`).join("")}`).join("")}
-      ${labels.map((label, i) => `<text x="${x(i)}" y="${height - 8}" text-anchor="middle" font-size="12" fill="#607078">${label}</text>`).join("")}
+      ${labels.map((label, i) => `<text x="${x(i)}" y="${height - 8}" text-anchor="middle" font-size="12" fill="#666666">${label}</text>`).join("")}
     </svg></div>`;
 }
 
@@ -2465,16 +2465,16 @@ function sectionCsv(title, headers, rows) {
 
 function reportStyles(printMode = false) {
   return `
-    body{margin:${printMode ? "28px" : "18px"};color:#1d2428;font-family:Inter,Aptos,"Segoe UI",Arial,sans-serif;font-size:12px;line-height:1.35}
-    header{border-bottom:2px solid #172b4d;margin-bottom:18px;padding-bottom:10px}
-    .eyebrow{margin:0 0 4px;color:#607078;font-size:10px;font-weight:800;text-transform:uppercase}
-    h1{margin:0 0 4px;color:#172b4d;font-size:24px}
-    h2{margin:22px 0 8px;color:#172b4d;font-size:17px;break-after:avoid}
+    body{margin:${printMode ? "28px" : "18px"};color:#121c2b;font-family:Figtree,Inter,Aptos,"Segoe UI",Arial,sans-serif;font-size:12px;line-height:1.35}
+    header{border-bottom:2px solid #003A70;margin-bottom:18px;padding-bottom:10px}
+    .eyebrow{margin:0 0 4px;color:#666666;font-size:10px;font-weight:800;text-transform:uppercase}
+    h1{margin:0 0 4px;color:#003A70;font-size:24px}
+    h2{margin:22px 0 8px;color:#003A70;font-size:17px;break-after:avoid}
     section{margin-bottom:18px;break-inside:avoid}
     table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:11px}
-    th,td{border:1px solid #aebbb7;padding:5px 6px;vertical-align:top;text-align:left}
-    th{background:#e7eeeb;color:#253138;font-weight:800}
-    tr:nth-child(even) td{background:#f8fbfa}
+    th,td{border:1px solid #8FB2CA;padding:5px 6px;vertical-align:top;text-align:left}
+    th{background:#EAF4FB;color:#003A70;font-weight:800}
+    tr:nth-child(even) td{background:#F6F9FD}
     p{margin:0 0 8px}
   `;
 }
