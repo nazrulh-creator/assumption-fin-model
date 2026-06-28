@@ -879,6 +879,18 @@ function renderScenarios(model, validation) {
           <p class="muted">The report pack includes the current P&L breakout, Unit Economics matrix, explicit formula-card assumptions, Unit Economics split assumptions, and implicit engine assumptions. Google Docs and Google Sheets exports are import-ready files for static GitHub Pages deployment.</p>
         </div>
       </div>
+      <div class="panel">
+        <div class="panel-header"><h3 class="panel-title">Working data backup / restore</h3><span class="mini-badge">Full model state</span></div>
+        <div class="panel-body">
+          <div class="button-row">
+            <button class="secondary-button" data-export="workspaceJson" type="button">Export JSON</button>
+            <button class="secondary-button" data-import="workspaceJson" type="button">Import JSON</button>
+            <button class="secondary-button" data-export="workspaceCsv" type="button">Export CSV</button>
+            <button class="secondary-button" data-import="workspaceCsv" type="button">Import CSV</button>
+          </div>
+          <p class="muted">Backup files include settings, P&L lines, drivers, formula cards, Unit Economics, saved scenarios, and audit trail. Import replaces the current working data in this browser.</p>
+        </div>
+      </div>
     </div>
   `;
   document.querySelector("#lockScenarioButton").textContent = state.settings.locked ? "Unlock" : "Lock";
@@ -1408,6 +1420,8 @@ function handleClick(event) {
   if (removeLine) return removeLineByKey(removeLine.dataset.removeLine);
   const restore = event.target.closest("[data-restore-scenario]");
   if (restore) return restoreScenario(restore.dataset.restoreScenario);
+  const importButton = event.target.closest("[data-import]");
+  if (importButton) return beginImport(importButton.dataset.import);
   const exportButton = event.target.closest("[data-export]");
   if (exportButton) return handleExport(exportButton.dataset.export);
 }
@@ -1635,6 +1649,10 @@ function handleExport(type) {
     downloadFile("formula_cards.csv", cardsCsv(), "text/csv");
   } else if (type === "auditCsv") {
     downloadFile("audit_trail.csv", auditCsv(), "text/csv");
+  } else if (type === "workspaceJson") {
+    downloadFile(`${filenameStem("workspace")}.json`, workspaceJson(), "application/json");
+  } else if (type === "workspaceCsv") {
+    downloadFile(`${filenameStem("workspace")}.csv`, workspaceCsv(), "text/csv");
   } else {
     const mapped = mapLegacyExport(type);
     const [scope, format] = mapped.split(":");
@@ -1642,6 +1660,43 @@ function handleExport(type) {
   }
   state.audit.push(auditEntry(`Exported ${type} output`, "Export", "-", state.settings.scenarioName));
   persist();
+}
+
+async function beginImport(type) {
+  const ok = window.confirm("Import will replace the current working data in this browser. Export a backup first if you need to keep the current state.");
+  if (!ok) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = type === "workspaceJson" ? ".json,application/json" : ".csv,text/csv";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const imported = type === "workspaceJson" ? parseWorkspaceJson(text) : parseWorkspaceCsv(text);
+      importWorkspaceState(imported, `${type} import from ${file.name}`);
+    } catch (error) {
+      toast(`Import failed: ${error.message || "Invalid file"}`);
+    }
+  }, { once: true });
+  input.click();
+}
+
+function importWorkspaceState(imported, label) {
+  const before = snapshotFrom(state);
+  const normalized = normalizeState(imported);
+  state.settings = clone(normalized.settings);
+  state.lines = clone(normalized.lines);
+  state.drivers = clone(normalized.drivers);
+  state.cards = clone(normalized.cards);
+  state.unitEconomics = clone(normalized.unitEconomics);
+  state.scenarios = clone(normalized.scenarios || []);
+  state.audit = clone(normalized.audit || []);
+  state.audit.push(auditEntry(`Imported working data: ${label}`, "Import", "-", state.settings.scenarioName));
+  undoStack.push(before);
+  redoStack = [];
+  render();
+  toast("Working data imported.");
 }
 
 function mapLegacyExport(type) {
@@ -2121,6 +2176,103 @@ function auditCsv() {
   return toCsv([["id", "timestamp", "event", "user"], ...state.audit.map((item) => [item.id, item.timestamp, item.text, item.user])]);
 }
 
+function workspacePayload() {
+  return {
+    schema: "abfm-workspace-v1",
+    exportedAt: timestamp(),
+    settings: clone(state.settings),
+    lines: clone(state.lines),
+    drivers: clone(state.drivers),
+    cards: clone(state.cards),
+    unitEconomics: clone(state.unitEconomics),
+    scenarios: clone(state.scenarios || []),
+    audit: clone(state.audit || []),
+  };
+}
+
+function workspaceJson() {
+  return JSON.stringify(workspacePayload(), null, 2);
+}
+
+function parseWorkspaceJson(text) {
+  const parsed = JSON.parse(text);
+  const payload = parsed.schema === "abfm-workspace-v1" ? parsed : parsed.state || parsed;
+  if (!payload.settings || !payload.lines || !payload.cards) throw new Error("JSON backup is missing model data.");
+  return payload;
+}
+
+function workspaceCsv() {
+  const payload = workspacePayload();
+  const rows = [
+    ["section", "key", "json"],
+    ["meta", "schema", payload.schema],
+    ["meta", "exportedAt", payload.exportedAt],
+    ["settings", "settings", JSON.stringify(payload.settings)],
+    ...payload.lines.map((item) => ["line", item.key, JSON.stringify(item)]),
+    ...payload.drivers.map((item) => ["driver", item.key, JSON.stringify(item)]),
+    ...payload.cards.map((item) => ["card", item.id, JSON.stringify(item)]),
+    ...payload.unitEconomics.segments.map((item) => ["segment", item.key, JSON.stringify(item)]),
+    ...Object.entries(payload.unitEconomics.splits || {}).map(([key, item]) => ["split", key, JSON.stringify({ lineKey: key, ...item })]),
+    ...payload.scenarios.map((item) => ["scenario", item.id, JSON.stringify(item)]),
+    ...payload.audit.map((item) => ["audit", item.id, JSON.stringify(item)]),
+  ];
+  return toCsv(rows);
+}
+
+function parseWorkspaceCsv(text) {
+  const rows = parseCsv(text).filter((row) => row.some((cell) => String(cell || "").trim()));
+  if (!rows.length) throw new Error("CSV is empty.");
+  const header = rows.shift().map((item) => String(item || "").trim().toLowerCase());
+  const sectionIndex = header.indexOf("section");
+  const keyIndex = header.indexOf("key");
+  const jsonIndex = header.indexOf("json");
+  if (sectionIndex < 0 || keyIndex < 0 || jsonIndex < 0) throw new Error("CSV backup must have section,key,json headers.");
+
+  const payload = {
+    settings: null,
+    lines: [],
+    drivers: [],
+    cards: [],
+    unitEconomics: { segments: [], splits: {} },
+    scenarios: [],
+    audit: [],
+  };
+
+  for (const row of rows) {
+    const section = String(row[sectionIndex] || "").trim();
+    const key = String(row[keyIndex] || "").trim();
+    const raw = row[jsonIndex] || "";
+    if (section === "meta") continue;
+    const value = parseJsonCell(raw, section, key);
+    if (section === "settings") payload.settings = value;
+    else if (section === "line") payload.lines.push(value);
+    else if (section === "driver") payload.drivers.push(value);
+    else if (section === "card") payload.cards.push(value);
+    else if (section === "segment") payload.unitEconomics.segments.push(value);
+    else if (section === "split") payload.unitEconomics.splits[key || value.lineKey] = splitFromCsvValue(value);
+    else if (section === "scenario") payload.scenarios.push(value);
+    else if (section === "audit") payload.audit.push(value);
+  }
+
+  if (!payload.settings || !payload.lines.length || !payload.cards.length) throw new Error("CSV backup is missing settings, P&L lines, or formula cards.");
+  if (!payload.unitEconomics.segments.length) payload.unitEconomics.segments = clone(DEFAULT_SEGMENTS);
+  return payload;
+}
+
+function parseJsonCell(raw, section, key) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`Invalid JSON payload for ${section}:${key}.`);
+  }
+}
+
+function splitFromCsvValue(value) {
+  const out = clone(value);
+  delete out.lineKey;
+  return out;
+}
+
 function reportHtml(scope, printMode = false) {
   const data = reportData(scope);
   return `<!doctype html>
@@ -2334,7 +2486,8 @@ function scopeLabel(scope) {
 }
 
 function filenameStem(scope) {
-  return `${scope === "pl" ? "pl" : scope === "unit" ? "unit_economics" : "pl_unit_economics"}_${String(state.settings.scenarioName || "scenario").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`;
+  const prefix = scope === "pl" ? "pl" : scope === "unit" ? "unit_economics" : scope === "workspace" ? "workspace" : "pl_unit_economics";
+  return `${prefix}_${String(state.settings.scenarioName || "scenario").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`;
 }
 
 function downloadFile(filename, content, mimeType) {
@@ -2355,6 +2508,42 @@ function toCsv(rows) {
     const value = String(cell ?? "");
     return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
   }).join(",")).join("\n");
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows;
 }
 
 function auditEntry(text, target, before, after) {

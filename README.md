@@ -11,6 +11,7 @@ Static single-user MVP for the Strategy team assumption-based P&L modelling engi
 - Unit Economics with up to 8 segments, split methods, matrix view, and mini P&Ls.
 - Scenario save/restore, undo/redo, audit trail, and report exports for PDF/print, Word, CSV, JSON, Google Docs import, and Google Sheets import formats.
 - P&L and Unit Economics report packs include explicit formula-card assumptions, Unit Economics split assumptions, and implicit engine/mathematical assumptions.
+- Full working-data backup and restore via JSON or CSV, covering settings, P&L lines, drivers, formula cards, Unit Economics, saved scenarios, and audit trail.
 - Local deterministic translator, plus a placeholder setting for a future live `/api/translate` backend.
 - Contextual User Guide and Quick Start Guide, both available from every screen and printable as PDF from their guide screens.
 
